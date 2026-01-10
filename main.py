@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import secrets
 import shutil
+import os
 
 # =====================
 # APP SETUP
@@ -33,17 +34,21 @@ app.add_middleware(
 )
 
 # =====================
-# CONFIG
+# FILE STORAGE
 # =====================
 
-FILES_DIR = Path("files")
+FILES_DIR = Path("files").resolve()
 FILES_DIR.mkdir(exist_ok=True)
 
-USERNAME = "admin"
-PASSWORD = "changeme"  # CHANGE THIS
+# =====================
+# AUTH CONFIG (ENV)
+# =====================
+
+USERNAME = os.getenv("FILE_SERVER_USER", "admin")
+PASSWORD = os.getenv("FILE_SERVER_PASS", "changeme")
 
 # =====================
-# AUTH
+# AUTH CHECK
 # =====================
 
 def check_auth(credentials: HTTPBasicCredentials = Depends(security)):
@@ -58,6 +63,16 @@ def check_auth(credentials: HTTPBasicCredentials = Depends(security)):
         )
 
 # =====================
+# SAFETY: PATH RESOLUTION
+# =====================
+
+def safe_path(rel_path: str) -> Path:
+    target = (FILES_DIR / rel_path).resolve()
+    if not str(target).startswith(str(FILES_DIR)):
+        raise HTTPException(status_code=400, detail="Invalid path")
+    return target
+
+# =====================
 # PUBLIC FILE ACCESS
 # =====================
 
@@ -65,27 +80,52 @@ app.mount("/files", StaticFiles(directory=FILES_DIR), name="files")
 
 @app.get("/")
 def index():
-    files = [f.name for f in FILES_DIR.iterdir() if f.is_file()]
-    links = "<br>".join(f'<a href="/files/{f}">{f}</a>' for f in files)
+    def walk(dir_path, base=""):
+        entries = []
+        for p in sorted(dir_path.iterdir()):
+            rel = f"{base}/{p.name}".lstrip("/")
+            if p.is_dir():
+                entries.append(f"<b>{rel}/</b>")
+                entries.extend(walk(p, rel))
+            else:
+                entries.append(f'<a href="/files/{rel}">{rel}</a>')
+        return entries
 
+    items = "<br>".join(walk(FILES_DIR))
     return HTMLResponse(f"""
         <h2>Public File Server</h2>
-        {links}
+        {items}
         <hr>
-        <p>Uploads require authentication.</p>
+        <p>Uploads and directory creation require authentication.</p>
     """)
 
 # =====================
-# PROTECTED UPLOAD
+# PROTECTED: CREATE DIRECTORY
 # =====================
 
-@app.post("/upload")
+@app.post("/mkdir/{path:path}")
+def make_dir(
+    path: str,
+    _: HTTPBasicCredentials = Depends(check_auth)
+):
+    target = safe_path(path)
+    target.mkdir(parents=True, exist_ok=True)
+    return {"created": path}
+
+# =====================
+# PROTECTED: UPLOAD FILE
+# =====================
+
+@app.post("/upload/{path:path}")
 def upload_file(
+    path: str,
     file: UploadFile = File(...),
     _: HTTPBasicCredentials = Depends(check_auth)
 ):
-    target = FILES_DIR / file.filename
+    target = safe_path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+
     with target.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    return {"updated": file.filename}
+    return {"updated": path}
