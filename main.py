@@ -80,14 +80,27 @@ app.mount("/files", StaticFiles(directory=FILES_DIR), name="files")
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    FOLDER_SVG = """
-<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    FOLDER_CLOSED_SVG = """
+<svg class="ico ico-closed" viewBox="0 0 24 24" fill="none"
+     stroke="currentColor" stroke-width="2" stroke-linecap="round"
+     stroke-linejoin="round" aria-hidden="true">
   <path d="M3 7a2 2 0 0 1 2-2h5l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
 </svg>
 """.strip()
 
+    FOLDER_OPEN_SVG = """
+<svg class="ico ico-open" viewBox="0 0 24 24" fill="none"
+     stroke="currentColor" stroke-width="2" stroke-linecap="round"
+     stroke-linejoin="round" aria-hidden="true">
+  <path d="M3 7a2 2 0 0 1 2-2h5l2 2h8"/>
+  <path d="M3 9h18l-2 10H5L3 9z"/>
+</svg>
+""".strip()
+
     FILE_SVG = """
-<svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+<svg class="ico" viewBox="0 0 24 24" fill="none"
+     stroke="currentColor" stroke-width="2" stroke-linecap="round"
+     stroke-linejoin="round" aria-hidden="true">
   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
   <path d="M14 2v6h6"/>
 </svg>
@@ -100,8 +113,11 @@ def index():
 
             if p.is_dir():
                 html += f"""
-                <div class="dir" data-path="{rel}">
-                    {FOLDER_SVG}
+                <div class="dir">
+                    <span class="folder-icon">
+                        {FOLDER_CLOSED_SVG}
+                        {FOLDER_OPEN_SVG}
+                    </span>
                     <span class="name">{p.name}</span>
                 </div>
                 <div class="children">
@@ -127,110 +143,122 @@ def index():
 <title>(～﹃～)~zZ Robotics File Server</title>
 <style>
 :root {{
-  --bg: #0f1115;
-  --panel: #0b0d11;
-  --text: #e5e7eb;
-  --muted: rgba(229,231,235,.6);
-  --border: #374151;
-  --input: #111827;
-  --hover: #1f2937;
-  --ok: #22c55e;
+  --bg:#0f1115;
+  --panel:#0b0d11;
+  --text:#e5e7eb;
+  --muted:rgba(229,231,235,.6);
+  --border:#374151;
+  --input:#111827;
+  --hover:#1f2937;
+  --ok:#22c55e;
 }}
 
 body {{
   font-family: system-ui, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  padding: 20px;
+  background:var(--bg);
+  color:var(--text);
+  padding:20px;
 }}
 
-h1 {{ margin: 0 0 6px 0; font-size: 20px; }}
-a {{ color: #60a5fa; text-decoration: none; }}
-a:hover {{ text-decoration: underline; }}
+h1 {{ margin:0 0 6px 0; font-size:20px; }}
+a {{ color:#60a5fa; text-decoration:none; }}
+a:hover {{ text-decoration:underline; }}
 
 .panel {{
-  border: 1px solid var(--border);
-  padding: 12px;
-  margin-bottom: 16px;
-  background: var(--panel);
+  border:1px solid var(--border);
+  padding:12px;
+  margin-bottom:16px;
+  background:var(--panel);
 }}
 
-.small {{ opacity: .6; font-size: 12px; color: var(--muted); }}
+.small {{ font-size:12px; opacity:.6; color:var(--muted); }}
 
-button, input, textarea {{
-  background: var(--input);
-  color: var(--text);
-  border: 1px solid var(--border);
-  padding: 6px 8px;
+button,input,textarea {{
+  background:var(--input);
+  color:var(--text);
+  border:1px solid var(--border);
+  padding:6px 8px;
 }}
 
-button:hover {{ background: var(--hover); cursor: pointer; }}
+button:hover {{ background:var(--hover); cursor:pointer; }}
 
-.progress {{ width: 100%; height: 10px; background: var(--hover); margin-top: 8px; }}
-.bar {{ height: 100%; width: 0%; background: var(--ok); }}
+.progress {{ width:100%; height:10px; background:var(--hover); margin-top:8px; }}
+.bar {{ height:100%; width:0%; background:var(--ok); }}
 
 .ico {{
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  opacity: .9;
+  width:16px;
+  height:16px;
+  flex:0 0 16px;
 }}
 
-.dir, .file {{
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.dir,.file {{
+  display:flex;
+  align-items:center;
+  gap:8px;
 }}
 
 .dir {{
-  font-weight: 600;
-  cursor: pointer;
-  margin-top: 6px;
+  cursor:pointer;
+  font-weight:600;
+  margin-top:6px;
 }}
 
 .children {{
-  margin-left: 20px;
-  display: none;
+  margin-left:20px;
+  display:none;
 }}
 
 .file {{
-  margin-left: 20px;
-  margin-top: 4px;
+  margin-left:20px;
+  margin-top:4px;
+}}
+
+.folder-icon .ico-open {{
+  display:none;
+}}
+
+.dir.open .folder-icon .ico-closed {{
+  display:none;
+}}
+
+.dir.open .folder-icon .ico-open {{
+  display:inline-block;
 }}
 
 .modal {{
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,.75);
-  display: none;
-  align-items: center;
-  justify-content: center;
+  position:fixed;
+  inset:0;
+  background:rgba(0,0,0,.75);
+  display:none;
+  align-items:center;
+  justify-content:center;
 }}
 
 .modal-content {{
-  background: var(--panel);
-  border: 1px solid var(--border);
-  width: 80%;
-  max-width: 900px;
-  padding: 12px;
+  background:var(--panel);
+  border:1px solid var(--border);
+  width:80%;
+  max-width:900px;
+  padding:12px;
 }}
 
 textarea {{
-  width: 100%;
-  height: 400px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  width:100%;
+  height:400px;
+  font-family:ui-monospace, monospace;
 }}
 </style>
 </head>
+
 <body>
 
-<h1>(～﹃～)~zZ Robotics File Server</h1>
+<h1>Robotics File Server</h1>
 <p class="small">Public reads · Authenticated writes</p>
 
 <div class="panel">
-  <h3 style="margin:0 0 10px 0;">⬆ Upload</h3>
+  <h3 style="margin:0 0 10px 0;">Upload</h3>
   <input type="file" id="fileInput">
-  <input type="text" id="uploadPath" placeholder="optional/path/filename.ext" style="width: 320px;">
+  <input type="text" id="uploadPath" placeholder="optional/path/filename.ext" style="width:320px;">
   <button onclick="upload()">Upload</button>
   <div class="progress"><div class="bar" id="progressBar"></div></div>
 </div>
@@ -242,9 +270,9 @@ textarea {{
 
 <div class="modal" id="jsonModal">
   <div class="modal-content">
-    <h3 id="jsonTitle" style="margin:0 0 10px 0;"></h3>
+    <h3 id="jsonTitle"></h3>
     <textarea id="jsonEditor"></textarea>
-    <div style="margin-top:10px; display:flex; gap:8px; align-items:center;">
+    <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
       <button onclick="saveJSON()">Save</button>
       <button onclick="closeJSON()">Close</button>
       <span class="small" id="jsonStatus"></span>
@@ -255,19 +283,20 @@ textarea {{
 <script>
 let currentJSONPath = null;
 
-// Folder toggle (click folder row toggles its next sibling .children)
+// folder toggle + icon swap
 document.querySelectorAll(".dir").forEach(dir => {{
   dir.onclick = () => {{
     const next = dir.nextElementSibling;
-    next.style.display = (next.style.display === "none" || next.style.display === "") ? "block" : "none";
+    const open = next.style.display === "block";
+    next.style.display = open ? "none" : "block";
+    dir.classList.toggle("open", !open);
   }};
 }});
 
-// Intercept JSON file clicks to open editor
+// JSON interception
 document.addEventListener("click", e => {{
   const a = e.target.closest("a[data-path]");
   if (!a) return;
-
   const path = a.dataset.path;
   if (path.endsWith(".json")) {{
     e.preventDefault();
@@ -278,7 +307,6 @@ document.addEventListener("click", e => {{
 function upload() {{
   const file = fileInput.files[0];
   let path = uploadPath.value.trim();
-
   if (!file) return alert("Select a file");
   if (!path) path = file.name;
 
@@ -287,13 +315,10 @@ function upload() {{
 
   const xhr = new XMLHttpRequest();
   xhr.open("POST", "/upload/" + path);
-
   xhr.upload.onprogress = e => {{
-    if (e.lengthComputable) {{
+    if (e.lengthComputable)
       progressBar.style.width = (e.loaded / e.total * 100) + "%";
-    }}
   }};
-
   xhr.onload = () => location.reload();
   xhr.send(form);
 }}
@@ -301,15 +326,12 @@ function upload() {{
 function openJSON(path) {{
   currentJSONPath = path;
   jsonTitle.textContent = path;
-  jsonStatus.textContent = "";
-
   fetch("/files/" + path)
     .then(r => r.text())
     .then(t => {{
       jsonEditor.value = JSON.stringify(JSON.parse(t), null, 2);
       jsonModal.style.display = "flex";
-    }})
-    .catch(() => alert("Invalid JSON"));
+    }});
 }}
 
 function closeJSON() {{
@@ -319,15 +341,13 @@ function closeJSON() {{
 async function saveJSON() {{
   try {{
     const data = JSON.parse(jsonEditor.value);
-    const blob = new Blob([JSON.stringify(data, null, 2)], {{ type: "application/json" }});
+    const blob = new Blob([JSON.stringify(data, null, 2)], {{ type:"application/json" }});
     const form = new FormData();
     form.append("file", blob);
-
     const res = await fetch("/upload/" + currentJSONPath, {{
-      method: "POST",
-      body: form
+      method:"POST",
+      body:form
     }});
-
     jsonStatus.textContent = res.ok ? "Saved" : "Save failed";
   }} catch {{
     jsonStatus.textContent = "Invalid JSON";
