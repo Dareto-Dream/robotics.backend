@@ -224,7 +224,7 @@ textarea {{
 </head>
 <body>
 
-<h1>Robotics File Server</h1>
+<h1>(～﹃～)~zZ Robotics File Server</h1>
 <p class="small">Public reads · Authenticated writes</p>
 
 <div class="panel">
