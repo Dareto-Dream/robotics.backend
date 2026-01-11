@@ -93,39 +93,44 @@ body {
     color: #e5e7eb;
     padding: 20px;
 }
-h1 { margin-bottom: 6px; }
 a { color: #60a5fa; text-decoration: none; }
 a:hover { text-decoration: underline; }
-input, textarea, button {
+button, input, textarea {
     background: #111827;
     color: #e5e7eb;
     border: 1px solid #374151;
     padding: 6px 8px;
 }
-button { cursor: pointer; }
-button:hover { background: #1f2937; }
+button:hover { background: #1f2937; cursor: pointer; }
 .panel {
     border: 1px solid #374151;
     padding: 12px;
     margin-bottom: 16px;
     background: #0b0d11;
 }
-.progress {
-    width: 100%;
-    background: #1f2937;
-    height: 12px;
-    margin-top: 6px;
+.file { margin-left: 16px; }
+.dir { font-weight: bold; margin-top: 8px; }
+.progress { width: 100%; height: 10px; background: #1f2937; }
+.bar { height: 100%; width: 0%; background: #22c55e; }
+.modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: none;
+    align-items: center;
+    justify-content: center;
 }
-.bar {
-    height: 100%;
-    width: 0%;
-    background: #22c55e;
+.modal-content {
+    background: #0b0d11;
+    border: 1px solid #374151;
+    width: 80%;
+    max-width: 900px;
+    padding: 12px;
 }
 textarea {
     width: 100%;
-    height: 300px;
+    height: 400px;
     font-family: monospace;
-    margin-top: 8px;
 }
 .small { font-size: 12px; opacity: 0.6; }
 </style>
@@ -136,36 +141,39 @@ textarea {
 <p class="small">Public reads · Authenticated writes</p>
 
 <div class="panel">
-    <h3>⬆ Upload File</h3>
-    <input type="file" id="fileInput"><br><br>
-    <input type="text" id="uploadPath" placeholder="optional/path/filename.ext" style="width: 320px;">
-    <br><br>
+    <h3>⬆ Upload</h3>
+    <input type="file" id="fileInput">
+    <input type="text" id="uploadPath" placeholder="optional/path/filename.ext" style="width:300px">
     <button onclick="upload()">Upload</button>
     <div class="progress"><div class="bar" id="progressBar"></div></div>
 </div>
 
 <div class="panel">
-    <h3>Inline JSON Editor</h3>
-    <input type="text" id="jsonPath" placeholder="path/to/file.json" style="width: 320px;">
-    <button onclick="loadJSON()">Load</button>
-    <textarea id="jsonEditor" placeholder="JSON will appear here"></textarea>
-    <br>
-    <button onclick="saveJSON()">Save JSON</button>
-    <div class="small" id="jsonStatus"></div>
+    <h3>Files</h3>
+    <div id="fileList">Loading…</div>
 </div>
 
-<p class="small">
-Browse files at <a href="/files/">/files/</a>
-</p>
+<!-- JSON EDITOR MODAL -->
+<div class="modal" id="jsonModal">
+    <div class="modal-content">
+        <h3 id="jsonTitle"></h3>
+        <textarea id="jsonEditor"></textarea>
+        <br><br>
+        <button onclick="saveJSON()">Save</button>
+        <button onclick="closeJSON()">Close</button>
+        <span class="small" id="jsonStatus"></span>
+    </div>
+</div>
 
 <script>
+let currentJSONPath = null;
+
 function upload() {
     const file = document.getElementById("fileInput").files[0];
     let path = document.getElementById("uploadPath").value.trim();
     const bar = document.getElementById("progressBar");
 
     if (!file) return alert("Select a file");
-
     if (!path) path = file.name;
 
     const form = new FormData();
@@ -175,72 +183,81 @@ function upload() {
     xhr.open("POST", "/upload/" + path);
 
     xhr.upload.onprogress = e => {
-        if (e.lengthComputable) {
+        if (e.lengthComputable)
             bar.style.width = (e.loaded / e.total * 100) + "%";
-        }
     };
 
-    xhr.onload = () => {
-        if (xhr.status === 200) location.reload();
-        else alert("Upload failed");
-    };
-
+    xhr.onload = () => location.reload();
     xhr.send(form);
 }
 
-async function loadJSON() {
-    const path = document.getElementById("jsonPath").value.trim();
-    const status = document.getElementById("jsonStatus");
-    if (!path.endsWith(".json")) {
-        status.textContent = "Not a JSON file";
-        return;
-    }
-
-    const res = await fetch("/files/" + path);
-    if (!res.ok) {
-        status.textContent = "Failed to load file";
-        return;
-    }
-
+async function loadFiles() {
+    const res = await fetch("/files/");
     const text = await res.text();
-    try {
-        const obj = JSON.parse(text);
-        document.getElementById("jsonEditor").value =
-            JSON.stringify(obj, null, 2);
-        status.textContent = "Loaded";
-    } catch {
-        status.textContent = "Invalid JSON";
-    }
+    document.getElementById("fileList").innerHTML =
+        `<div class="small">Browse full tree at <a href="/files/">/files/</a></div>`;
+}
+
+function openJSON(path) {
+    currentJSONPath = path;
+    document.getElementById("jsonTitle").textContent = path;
+    document.getElementById("jsonStatus").textContent = "";
+
+    fetch("/files/" + path)
+        .then(r => r.text())
+        .then(t => {
+            const obj = JSON.parse(t);
+            document.getElementById("jsonEditor").value =
+                JSON.stringify(obj, null, 2);
+            document.getElementById("jsonModal").style.display = "flex";
+        })
+        .catch(() => alert("Invalid JSON"));
+}
+
+function closeJSON() {
+    document.getElementById("jsonModal").style.display = "none";
 }
 
 async function saveJSON() {
-    const path = document.getElementById("jsonPath").value.trim();
     const status = document.getElementById("jsonStatus");
-    const text = document.getElementById("jsonEditor").value;
+    let data;
 
-    let parsed;
     try {
-        parsed = JSON.parse(text);
+        data = JSON.parse(document.getElementById("jsonEditor").value);
     } catch {
         status.textContent = "JSON syntax error";
         return;
     }
 
     const blob = new Blob(
-        [JSON.stringify(parsed, null, 2)],
+        [JSON.stringify(data, null, 2)],
         { type: "application/json" }
     );
 
     const form = new FormData();
-    form.append("file", blob, path.split("/").pop());
+    form.append("file", blob);
 
-    const res = await fetch("/upload/" + path, {
+    const res = await fetch("/upload/" + currentJSONPath, {
         method: "POST",
         body: form
     });
 
     status.textContent = res.ok ? "Saved" : "Save failed";
 }
+
+// Hijack JSON clicks
+document.addEventListener("click", e => {
+    const a = e.target.closest("a");
+    if (!a) return;
+
+    const href = a.getAttribute("href");
+    if (href && href.startsWith("/files/") && href.endsWith(".json")) {
+        e.preventDefault();
+        openJSON(href.replace("/files/", ""));
+    }
+});
+
+loadFiles();
 </script>
 
 </body>
