@@ -264,6 +264,34 @@ loadFiles();
 </html>
 """)
 
+@app.get("/files/")
+def index():
+    def walk(dir_path, base=""):
+        entries = []
+        for p in sorted(dir_path.iterdir()):
+            rel = f"{base}/{p.name}".lstrip("/")
+
+            if p.is_dir():
+                entries.append(f"<b>{rel}/</b>")
+                entries.extend(walk(p, rel))
+            else:
+                size = p.stat().st_size
+                size_kb = size / 1024
+                entries.append(
+                    f'<a href="/files/{rel}" data-path="{rel}">'
+                    f'{rel}</a> '
+                    f'<span style="opacity:.6">({size_kb:.1f} KB)</span>'
+                )
+        return entries
+
+    items = "<br>".join(walk(FILES_DIR))
+    return HTMLResponse(f"""
+        <h2>Public File Server</h2>
+        {items}
+        <hr>
+        <p>Uploads and directory creation require authentication.</p>
+    """)
+
 # =====================
 # PROTECTED: CREATE DIRECTORY
 # =====================
