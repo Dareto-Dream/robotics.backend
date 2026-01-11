@@ -78,61 +78,97 @@ def safe_path(rel_path: str) -> Path:
 
 app.mount("/files", StaticFiles(directory=FILES_DIR), name="files")
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def index():
-    return HTMLResponse("""
+    def walk(dir_path, base=""):
+        html = ""
+        for p in sorted(dir_path.iterdir()):
+            rel = f"{base}/{p.name}".lstrip("/")
+
+            if p.is_dir():
+                html += f"""
+                <div class="dir">📁 {p.name}</div>
+                <div class="children">
+                    {walk(p, rel)}
+                </div>
+                """
+            else:
+                size_kb = p.stat().st_size / 1024
+                html += f"""
+                <div class="file">
+                    <a href="/files/{rel}" data-path="{rel}">
+                        {p.name}
+                    </a>
+                    <span class="small">({size_kb:.1f} KB)</span>
+                </div>
+                """
+        return html
+
+    return HTMLResponse(f"""
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="utf-8">
 <title>Robotics File Server</title>
 <style>
-body {
+body {{
     font-family: system-ui, sans-serif;
     background: #0f1115;
     color: #e5e7eb;
     padding: 20px;
-}
-a { color: #60a5fa; text-decoration: none; }
-a:hover { text-decoration: underline; }
-button, input, textarea {
-    background: #111827;
-    color: #e5e7eb;
-    border: 1px solid #374151;
-    padding: 6px 8px;
-}
-button:hover { background: #1f2937; cursor: pointer; }
-.panel {
+}}
+a {{ color: #60a5fa; text-decoration: none; }}
+a:hover {{ text-decoration: underline; }}
+.panel {{
     border: 1px solid #374151;
     padding: 12px;
     margin-bottom: 16px;
     background: #0b0d11;
-}
-.file { margin-left: 16px; }
-.dir { font-weight: bold; margin-top: 8px; }
-.progress { width: 100%; height: 10px; background: #1f2937; }
-.bar { height: 100%; width: 0%; background: #22c55e; }
-.modal {
+}}
+.dir {{
+    font-weight: bold;
+    cursor: pointer;
+    margin-top: 6px;
+}}
+.children {{
+    margin-left: 16px;
+    display: none;
+}}
+.file {{ margin-left: 16px; }}
+.small {{ opacity: .6; font-size: 12px; }}
+.progress {{ width: 100%; height: 10px; background: #1f2937; }}
+.bar {{ height: 100%; width: 0%; background: #22c55e; }}
+
+.modal {{
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.75);
+    background: rgba(0,0,0,.75);
     display: none;
     align-items: center;
     justify-content: center;
-}
-.modal-content {
+}}
+.modal-content {{
     background: #0b0d11;
     border: 1px solid #374151;
     width: 80%;
     max-width: 900px;
     padding: 12px;
-}
-textarea {
+}}
+textarea {{
     width: 100%;
     height: 400px;
     font-family: monospace;
-}
-.small { font-size: 12px; opacity: 0.6; }
+    background: #111827;
+    color: #e5e7eb;
+    border: 1px solid #374151;
+}}
+button, input {{
+    background: #111827;
+    color: #e5e7eb;
+    border: 1px solid #374151;
+    padding: 6px 8px;
+}}
+button:hover {{ background: #1f2937; cursor: pointer; }}
 </style>
 </head>
 <body>
@@ -143,36 +179,55 @@ textarea {
 <div class="panel">
     <h3>⬆ Upload</h3>
     <input type="file" id="fileInput">
-    <input type="text" id="uploadPath" placeholder="optional/path/filename.ext" style="width:300px">
+    <input type="text" id="uploadPath" placeholder="optional/path/filename.ext">
     <button onclick="upload()">Upload</button>
     <div class="progress"><div class="bar" id="progressBar"></div></div>
 </div>
 
 <div class="panel">
     <h3>Files</h3>
-    <div id="fileList">Loading…</div>
+    {walk(FILES_DIR)}
 </div>
 
-<!-- JSON EDITOR MODAL -->
+<!-- JSON MODAL -->
 <div class="modal" id="jsonModal">
-    <div class="modal-content">
-        <h3 id="jsonTitle"></h3>
-        <textarea id="jsonEditor"></textarea>
-        <br><br>
-        <button onclick="saveJSON()">Save</button>
-        <button onclick="closeJSON()">Close</button>
-        <span class="small" id="jsonStatus"></span>
-    </div>
+  <div class="modal-content">
+    <h3 id="jsonTitle"></h3>
+    <textarea id="jsonEditor"></textarea>
+    <br><br>
+    <button onclick="saveJSON()">Save</button>
+    <button onclick="closeJSON()">Close</button>
+    <span class="small" id="jsonStatus"></span>
+  </div>
 </div>
 
 <script>
 let currentJSONPath = null;
 
-function upload() {
-    const file = document.getElementById("fileInput").files[0];
-    let path = document.getElementById("uploadPath").value.trim();
-    const bar = document.getElementById("progressBar");
+// folder toggle
+document.querySelectorAll(".dir").forEach(dir => {{
+    dir.onclick = () => {{
+        const next = dir.nextElementSibling;
+        next.style.display =
+            next.style.display === "none" ? "block" : "none";
+    }};
+}});
 
+// JSON interception
+document.addEventListener("click", e => {{
+    const a = e.target.closest("a[data-path]");
+    if (!a) return;
+
+    const path = a.dataset.path;
+    if (path.endsWith(".json")) {{
+        e.preventDefault();
+        openJSON(path);
+    }}
+}});
+
+function upload() {{
+    const file = fileInput.files[0];
+    let path = uploadPath.value.trim();
     if (!file) return alert("Select a file");
     if (!path) path = file.name;
 
@@ -182,115 +237,54 @@ function upload() {
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/upload/" + path);
 
-    xhr.upload.onprogress = e => {
+    xhr.upload.onprogress = e => {{
         if (e.lengthComputable)
-            bar.style.width = (e.loaded / e.total * 100) + "%";
-    };
-
+            progressBar.style.width = (e.loaded / e.total * 100) + "%";
+    }};
     xhr.onload = () => location.reload();
     xhr.send(form);
-}
+}}
 
-async function loadFiles() {
-    const res = await fetch("/files/");
-    const text = await res.text();
-    document.getElementById("fileList").innerHTML =
-        `<div class="small">Browse full tree at <a href="/browse">/browse</a></div>`;
-}
-
-function openJSON(path) {
+function openJSON(path) {{
     currentJSONPath = path;
-    document.getElementById("jsonTitle").textContent = path;
-    document.getElementById("jsonStatus").textContent = "";
-
+    jsonTitle.textContent = path;
     fetch("/files/" + path)
         .then(r => r.text())
-        .then(t => {
-            const obj = JSON.parse(t);
-            document.getElementById("jsonEditor").value =
-                JSON.stringify(obj, null, 2);
-            document.getElementById("jsonModal").style.display = "flex";
-        })
-        .catch(() => alert("Invalid JSON"));
-}
+        .then(t => {{
+            jsonEditor.value = JSON.stringify(JSON.parse(t), null, 2);
+            jsonModal.style.display = "flex";
+        }});
+}}
 
-function closeJSON() {
-    document.getElementById("jsonModal").style.display = "none";
-}
+function closeJSON() {{
+    jsonModal.style.display = "none";
+}}
 
-async function saveJSON() {
-    const status = document.getElementById("jsonStatus");
-    let data;
+async function saveJSON() {{
+    try {{
+        const data = JSON.parse(jsonEditor.value);
+        const blob = new Blob(
+            [JSON.stringify(data, null, 2)],
+            {{ type: "application/json" }}
+        );
+        const form = new FormData();
+        form.append("file", blob);
 
-    try {
-        data = JSON.parse(document.getElementById("jsonEditor").value);
-    } catch {
-        status.textContent = "JSON syntax error";
-        return;
-    }
+        await fetch("/upload/" + currentJSONPath, {{
+            method: "POST",
+            body: form
+        }});
 
-    const blob = new Blob(
-        [JSON.stringify(data, null, 2)],
-        { type: "application/json" }
-    );
-
-    const form = new FormData();
-    form.append("file", blob);
-
-    const res = await fetch("/upload/" + currentJSONPath, {
-        method: "POST",
-        body: form
-    });
-
-    status.textContent = res.ok ? "Saved" : "Save failed";
-}
-
-// Hijack JSON clicks
-document.addEventListener("click", e => {
-    const a = e.target.closest("a");
-    if (!a) return;
-
-    const href = a.getAttribute("href");
-    if (href && href.startsWith("/files/") && href.endsWith(".json")) {
-        e.preventDefault();
-        openJSON(href.replace("/files/", ""));
-    }
-});
-
-loadFiles();
+        jsonStatus.textContent = "Saved";
+    }} catch {{
+        jsonStatus.textContent = "Invalid JSON";
+    }}
+}}
 </script>
 
 </body>
 </html>
 """)
-
-@app.get("/browse", response_class=HTMLResponse)
-def index():
-    def walk(dir_path, base=""):
-        entries = []
-        for p in sorted(dir_path.iterdir()):
-            rel = f"{base}/{p.name}".lstrip("/")
-
-            if p.is_dir():
-                entries.append(f"<b>{rel}/</b>")
-                entries.extend(walk(p, rel))
-            else:
-                size = p.stat().st_size
-                size_kb = size / 1024
-                entries.append(
-                    f'<a href="/files/{rel}" data-path="{rel}">'
-                    f'{rel}</a> '
-                    f'<span style="opacity:.6">({size_kb:.1f} KB)</span>'
-                )
-        return entries
-
-    items = "<br>".join(walk(FILES_DIR))
-    return HTMLResponse(f"""
-        <h2>Public File Server</h2>
-        {items}
-        <hr>
-        <p>Uploads and directory creation require authentication.</p>
-    """)
 
 # =====================
 # PROTECTED: CREATE DIRECTORY
