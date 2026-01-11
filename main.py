@@ -264,7 +264,7 @@ loadFiles();
 </html>
 """)
 
-@app.get("/files/")
+@app.get("/browse", response_class=HTMLResponse)
 def index():
     def walk(dir_path, base=""):
         entries = []
