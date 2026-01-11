@@ -195,7 +195,7 @@ async function loadFiles() {
     const res = await fetch("/files/");
     const text = await res.text();
     document.getElementById("fileList").innerHTML =
-        `<div class="small">Browse full tree at <a href="/files/">/files/</a></div>`;
+        `<div class="small">Browse full tree at <a href="/browse">/browse</a></div>`;
 }
 
 function openJSON(path) {
