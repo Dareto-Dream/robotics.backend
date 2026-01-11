@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -129,3 +129,27 @@ def upload_file(
         shutil.copyfileobj(file.file, buffer)
 
     return {"updated": path}
+
+# =====================
+# PROTECTED: DELETE FILE OR DIRECTORY
+# =====================
+
+@app.delete("/delete/{path:path}")
+def delete_path(
+    path: str,
+    _: HTTPBasicCredentials = Depends(check_auth)
+):
+    target = safe_path(path)
+
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Path does not exist")
+
+    if target.is_file():
+        target.unlink()
+        return {"deleted_file": path}
+
+    if target.is_dir():
+        shutil.rmtree(target)
+        return {"deleted_directory": path}
+
+    raise HTTPException(status_code=400, detail="Invalid target")
