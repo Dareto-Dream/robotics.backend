@@ -15,11 +15,67 @@ function auth() {
   return _auth;
 }
 
-// ── Folder toggle ──────────────────────────────────
+// ── Folder toggle + keyboard + persistence ────────────
+const STORAGE_OPEN = 'fs_open_dirs_v1';
+let _dirIdsReady = false;
+let _isSearching = false;
+
+function ensureDirIds() {
+  if (_dirIdsReady) return;
+  document.querySelectorAll('.dir').forEach((dir, i) => {
+    // Give every directory a stable id for persistence
+    if (!dir.dataset.did) dir.dataset.did = 'd' + i;
+
+    // Keyboard accessibility
+    dir.tabIndex = 0;
+    dir.setAttribute('role', 'button');
+    dir.setAttribute('aria-expanded', dir.classList.contains('open') ? 'true' : 'false');
+  });
+  _dirIdsReady = true;
+}
+
+function setDirOpen(dir, open) {
+  const children = dir.nextElementSibling;
+  dir.classList.toggle('open', open);
+  if (children && children.classList.contains('children')) {
+    children.classList.toggle('open', open);
+  }
+  dir.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function saveOpenDirs() {
+  if (_isSearching) return; // don't overwrite during filtering
+  ensureDirIds();
+  const open = [];
+  document.querySelectorAll('.dir.open').forEach(d => open.push(d.dataset.did));
+  try { localStorage.setItem(STORAGE_OPEN, JSON.stringify(open)); } catch {}
+}
+
+function restoreOpenDirs() {
+  ensureDirIds();
+  let open = [];
+  try { open = JSON.parse(localStorage.getItem(STORAGE_OPEN) || '[]'); } catch { open = []; }
+  const openSet = new Set(open);
+
+  document.querySelectorAll('.dir').forEach(d => setDirOpen(d, openSet.has(d.dataset.did)));
+}
+
+function toggleDir(dir) {
+  const willOpen = !dir.classList.contains('open');
+  setDirOpen(dir, willOpen);
+  saveOpenDirs();
+}
+
+ensureDirIds();
+restoreOpenDirs();
+
 document.querySelectorAll('.dir').forEach(dir => {
-  dir.addEventListener('click', () => {
-    dir.classList.toggle('open');
-    dir.nextElementSibling.classList.toggle('open');
+  dir.addEventListener('click', () => toggleDir(dir));
+  dir.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      toggleDir(dir);
+    }
   });
 });
 
@@ -30,6 +86,7 @@ document.getElementById('toggleExpand').addEventListener('click', () => {
   _expanded = !_expanded;
   document.querySelectorAll('.dir').forEach(d => d.classList.toggle('open', _expanded));
   document.querySelectorAll('.children').forEach(c => c.classList.toggle('open', _expanded));
+  saveOpenDirs();
 });
 
 // ── Empty state on initial load ────────────────────
@@ -38,12 +95,65 @@ if (document.querySelectorAll('.file').length === 0) {
   document.getElementById('emptyState').textContent = 'Empty — upload a file to get started';
 }
 
+
+// ── Row selection (subtle) ──────────────────────────
+const STORAGE_SEL = 'fs_selected_v1';
+
+function clearSelection() {
+  document.querySelectorAll('.file.selected').forEach(f => f.classList.remove('selected'));
+  document.querySelectorAll('.dir.selected').forEach(d => d.classList.remove('selected'));
+}
+
+function restoreSelection() {
+  let path = null;
+  try { path = localStorage.getItem(STORAGE_SEL); } catch { path = null; }
+  if (!path) return;
+
+  const file = Array.from(document.querySelectorAll('.file')).find(f => (f.dataset.path || '') === path);
+  if (file) {
+    file.classList.add('selected');
+    // Also lightly accent its nearest open directory
+    const parentChildren = file.parentElement;
+    if (parentChildren && parentChildren.classList.contains('children')) {
+      const dir = parentChildren.previousElementSibling;
+      if (dir && dir.classList.contains('dir')) dir.classList.add('selected');
+    }
+  }
+}
+
+restoreSelection();
+
+document.addEventListener('click', e => {
+  const row = e.target.closest('.file');
+  if (!row) return;
+
+  // Ignore clicks on buttons / actions
+  if (e.target.closest('.file-actions')) return;
+  if (e.target.closest('button')) return;
+
+  clearSelection();
+  row.classList.add('selected');
+
+  const path = row.dataset.path || '';
+  if (path) {
+    try { localStorage.setItem(STORAGE_SEL, path); } catch {}
+  }
+
+  // Accent the nearest directory header
+  const parentChildren = row.parentElement;
+  if (parentChildren && parentChildren.classList.contains('children')) {
+    const dir = parentChildren.previousElementSibling;
+    if (dir && dir.classList.contains('dir')) dir.classList.add('selected');
+  }
+});
+
 // ── Search / Filter ────────────────────────────────
 const searchInput = document.getElementById('searchInput');
 const emptyState  = document.getElementById('emptyState');
 
 searchInput.addEventListener('input', function () {
   const q = this.value.trim().toLowerCase();
+  _isSearching = !!q;
 
   // Full reset
   document.querySelectorAll('.dir').forEach(d => { d.style.display = ''; d.classList.remove('open'); });
@@ -51,7 +161,11 @@ searchInput.addEventListener('input', function () {
   document.querySelectorAll('.file').forEach(f => f.style.display = '');
   emptyState.style.display = 'none';
 
-  if (!q) return;
+  if (!q) {
+    _isSearching = false;
+    restoreOpenDirs();
+    return;
+  }
 
   // Hide everything, then selectively show matches + their ancestors
   document.querySelectorAll('.dir').forEach(d => d.style.display = 'none');

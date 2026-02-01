@@ -467,3 +467,167 @@ body {
 ::-webkit-scrollbar-track      { background: transparent; }
 ::-webkit-scrollbar-thumb      { background: var(--border-sub); border-radius: 2px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--border); }
+
+
+/* ═══════════════════════════════════════════════════
+   UI UPGRADE (density, size, less 'generated')
+   ═══════════════════════════════════════════════════ */
+
+:root {
+  --accent: #7dd3fc;
+  --accent-bg: rgba(125, 211, 252, 0.10);
+}
+
+/* Overall scale */
+body {
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.layout {
+  max-width: 1040px;
+}
+
+/* Header + toolbar breathing room */
+.header {
+  padding: 14px 28px;
+}
+
+.toolbar {
+  padding: 12px 28px;
+}
+
+/* Tree container spacing */
+.tree-container {
+  padding: 14px 28px 56px;
+}
+
+/* Search */
+.search {
+  max-width: 420px;
+  font-size: 13px;
+  padding: 7px 12px;
+}
+
+/* Buttons slightly larger */
+.btn {
+  padding: 6px 11px;
+}
+
+.btn-icon { padding: 6px 8px; }
+.btn-sm   { padding: 5px 9px; }
+
+.btn-upload {
+  margin-left: 4px;
+}
+
+/* Rows */
+.dir, .file {
+  padding: 5px 8px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+
+.dir:hover {
+  background: linear-gradient(to right, var(--surface), transparent);
+}
+
+.file:hover {
+  background: var(--surface);
+}
+
+/* Icons slightly larger */
+.ico {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+}
+
+/* File size recedes */
+.file-size {
+  font-size: 10.5px;
+  opacity: 0.75;
+}
+
+/* Active directory accent (only when open/selected) */
+.dir.open,
+.dir.selected {
+  background: rgba(255, 255, 255, 0.03);
+  position: relative;
+}
+
+.dir.open::before,
+.dir.selected::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  opacity: 0.75;
+}
+
+.dir.open .dir-name,
+.dir.selected .dir-name {
+  color: var(--accent);
+}
+
+/* Subtle row selection state */
+.file.selected {
+  background: var(--surface-hi);
+  border: 1px solid rgba(125, 211, 252, 0.22);
+}
+
+.file.selected .file-name {
+  color: #fff;
+}
+
+/* Make action buttons feel less "tooling" */
+.file-actions {
+  gap: 2px;
+}
+
+.act {
+  border-radius: 5px;
+}
+
+/* Modal: bigger + calmer */
+.modal {
+  max-width: 960px;
+  border-radius: 10px;
+}
+
+.modal-head {
+  padding: 12px 18px;
+}
+
+#jsonEditor {
+  font-size: 13.5px;
+  line-height: 1.8;
+  padding: 20px 22px;
+}
+
+/* Keyboard focus styling (non-AI hallmark) */
+.search:focus-visible,
+.upload-path:focus-visible,
+#jsonEditor:focus-visible,
+.btn:focus-visible,
+.act:focus-visible,
+a:focus-visible,
+.dir:focus-visible {
+  outline: 2px solid rgba(125, 211, 252, 0.55);
+  outline-offset: 2px;
+}
+
+.btn:focus-visible,
+.act:focus-visible,
+.dir:focus-visible {
+  border-color: rgba(125, 211, 252, 0.35);
+}
+
+/* Make links feel interactive on focus as well */
+a:focus-visible {
+  border-radius: 6px;
+}
