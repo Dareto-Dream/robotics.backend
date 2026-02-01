@@ -116,8 +116,8 @@ def walk(dir_path: Path, base: str = "") -> str:
         if p.is_dir():
             html += (
                 f'<div class="dir">'
-                f'  <span class="folder-icon">{FOLDER_CLOSED_SVG}{FOLDER_OPEN_SVG}</span>'
-                f'  <span class="name">{p.name}</span>'
+                f'<span class="folder-icon">{FOLDER_CLOSED_SVG}{FOLDER_OPEN_SVG}</span>'
+                f'<span class="name">{p.name}</span>'
                 f'</div>'
                 f'<div class="children">{walk(p, rel)}</div>'
             )
@@ -125,9 +125,9 @@ def walk(dir_path: Path, base: str = "") -> str:
             size_kb = p.stat().st_size / 1024
             html += (
                 f'<div class="file">'
-                f'  {FILE_SVG}'
-                f'  <a href="/files/{rel}" data-path="{rel}">{p.name}</a>'
-                f'  <span class="small">({size_kb:.1f} KB)</span>'
+                f'{FILE_SVG}'
+                f'<a href="/files/{rel}" data-path="{rel}">{p.name}</a>'
+                f'<span class="size-badge">{size_kb:.1f} KB</span>'
                 f'</div>'
             )
     return html

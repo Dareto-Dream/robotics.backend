@@ -1,40 +1,73 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>(～﹃～)~zZ Robotics File Server</title>
-<link rel="stylesheet" href="/index.css">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robotics File Server</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@700;800&family=DM+Sans:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/index.css">
 </head>
 <body>
 
-<h1>Robotics File Server</h1>
-<p class="small">Public reads · Authenticated writes</p>
+<div class="page-wrap">
 
-<div class="panel">
-  <h3 style="margin:0 0 10px 0;">Upload</h3>
-  <input type="file" id="fileInput">
-  <input type="text" id="uploadPath" placeholder="optional/path/filename.ext" style="width:320px;">
-  <button onclick="upload()">Upload</button>
-  <div class="progress"><div class="bar" id="progressBar"></div></div>
+  <!-- ── Header ── -->
+  <header class="site-header">
+    <div class="header-brand">
+      <span class="brand-icon">◈</span>
+      <div class="brand-text">
+        <h1>Robotics File Server</h1>
+        <span class="brand-sub">deltavdevs · public reads · authenticated writes</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Upload Drop Zone ── -->
+  <section class="upload-zone" id="dropZone">
+    <div class="upload-zone-inner">
+      <div class="upload-icon">↑</div>
+      <p class="upload-label">Drop files here or click to browse</p>
+      <div class="upload-controls">
+        <input type="file" id="fileInput" class="visually-hidden">
+        <button class="btn btn-ghost" onclick="document.getElementById('fileInput').click()">Browse</button>
+        <input type="text" id="uploadPath" placeholder="optional/path/filename.ext" class="path-input">
+        <button class="btn btn-accent" onclick="upload()">Upload</button>
+      </div>
+      <div class="progress"><div class="bar" id="progressBar"></div></div>
+    </div>
+  </section>
+
+  <!-- ── File Tree ── -->
+  <section class="files-panel">
+    <div class="files-header">
+      <span class="files-title">File System</span>
+      <span class="files-count" id="fileCount"></span>
+    </div>
+    <div class="file-tree">
+      <!-- FILELIST -->
+    </div>
+  </section>
+
 </div>
 
-<div class="panel">
-  <h3 style="margin:0 0 10px 0;">Files</h3>
-  <!-- FILELIST -->
-</div>
-
-<div class="modal" id="jsonModal">
-  <div class="modal-content">
-    <h3 id="jsonTitle"></h3>
-    <textarea id="jsonEditor"></textarea>
-    <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
-      <button onclick="saveJSON()">Save</button>
-      <button onclick="closeJSON()">Close</button>
-      <span class="small" id="jsonStatus"></span>
+<!-- ── JSON Modal ── -->
+<div class="modal-backdrop" id="jsonModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span class="modal-title" id="jsonTitle"></span>
+      <button class="btn btn-ghost btn-sm modal-close" onclick="closeJSON()">✕</button>
+    </div>
+    <textarea id="jsonEditor" spellcheck="false"></textarea>
+    <div class="modal-footer">
+      <button class="btn btn-accent btn-sm" onclick="saveJSON()">Save</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeJSON()">Cancel</button>
+      <span class="modal-status" id="jsonStatus"></span>
     </div>
   </div>
 </div>
 
-<script src="/index.js"></script>
+<script src="/static/index.js"></script>
 </body>
 </html>
