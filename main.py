@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status, Response
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, status
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -34,11 +34,16 @@ app.add_middleware(
 )
 
 # =====================
-# FILE STORAGE
+# DIRECTORIES
 # =====================
 
-FILES_DIR = Path("files").resolve()
+FILES_DIR  = Path("files").resolve()
 FILES_DIR.mkdir(exist_ok=True)
+
+STATIC_DIR = Path("static").resolve()
+STATIC_DIR.mkdir(exist_ok=True)
+
+TEMPLATE   = Path("index.html")
 
 # =====================
 # AUTH CONFIG (ENV)
@@ -73,291 +78,72 @@ def safe_path(rel_path: str) -> Path:
     return target
 
 # =====================
-# PUBLIC FILE ACCESS
+# FILE-TREE HTML GENERATOR
 # =====================
 
-app.mount("/files", StaticFiles(directory=FILES_DIR), name="files")
+FOLDER_CLOSED_SVG = (
+    '<svg class="ico ico-closed" viewBox="0 0 24 24" fill="none"'
+    ' stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+    ' stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M3 7a2 2 0 0 1 2-2h5l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>'
+    '</svg>'
+)
+
+FOLDER_OPEN_SVG = (
+    '<svg class="ico ico-open" viewBox="0 0 24 24" fill="none"'
+    ' stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+    ' stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M3 7a2 2 0 0 1 2-2h5l2 2h8"/>'
+    '<path d="M3 9h18l-2 10H5L3 9z"/>'
+    '</svg>'
+)
+
+FILE_SVG = (
+    '<svg class="ico" viewBox="0 0 24 24" fill="none"'
+    ' stroke="currentColor" stroke-width="2" stroke-linecap="round"'
+    ' stroke-linejoin="round" aria-hidden="true">'
+    '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>'
+    '<path d="M14 2v6h6"/>'
+    '</svg>'
+)
+
+
+def walk(dir_path: Path, base: str = "") -> str:
+    html = ""
+    for p in sorted(dir_path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
+        rel = f"{base}/{p.name}".lstrip("/")
+
+        if p.is_dir():
+            html += (
+                f'<div class="dir">'
+                f'  <span class="folder-icon">{FOLDER_CLOSED_SVG}{FOLDER_OPEN_SVG}</span>'
+                f'  <span class="name">{p.name}</span>'
+                f'</div>'
+                f'<div class="children">{walk(p, rel)}</div>'
+            )
+        else:
+            size_kb = p.stat().st_size / 1024
+            html += (
+                f'<div class="file">'
+                f'  {FILE_SVG}'
+                f'  <a href="/files/{rel}" data-path="{rel}">{p.name}</a>'
+                f'  <span class="small">({size_kb:.1f} KB)</span>'
+                f'</div>'
+            )
+    return html
+
+# =====================
+# STATIC ASSETS & INDEX
+# =====================
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+app.mount("/files",  StaticFiles(directory=FILES_DIR),  name="files")
+
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    FOLDER_CLOSED_SVG = """
-<svg class="ico ico-closed" viewBox="0 0 24 24" fill="none"
-     stroke="currentColor" stroke-width="2" stroke-linecap="round"
-     stroke-linejoin="round" aria-hidden="true">
-  <path d="M3 7a2 2 0 0 1 2-2h5l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
-</svg>
-""".strip()
-
-    FOLDER_OPEN_SVG = """
-<svg class="ico ico-open" viewBox="0 0 24 24" fill="none"
-     stroke="currentColor" stroke-width="2" stroke-linecap="round"
-     stroke-linejoin="round" aria-hidden="true">
-  <path d="M3 7a2 2 0 0 1 2-2h5l2 2h8"/>
-  <path d="M3 9h18l-2 10H5L3 9z"/>
-</svg>
-""".strip()
-
-    FILE_SVG = """
-<svg class="ico" viewBox="0 0 24 24" fill="none"
-     stroke="currentColor" stroke-width="2" stroke-linecap="round"
-     stroke-linejoin="round" aria-hidden="true">
-  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-  <path d="M14 2v6h6"/>
-</svg>
-""".strip()
-
-    def walk(dir_path: Path, base: str = "") -> str:
-        html = ""
-        for p in sorted(dir_path.iterdir(), key=lambda x: (x.is_file(), x.name.lower())):
-            rel = f"{base}/{p.name}".lstrip("/")
-
-            if p.is_dir():
-                html += f"""
-                <div class="dir">
-                    <span class="folder-icon">
-                        {FOLDER_CLOSED_SVG}
-                        {FOLDER_OPEN_SVG}
-                    </span>
-                    <span class="name">{p.name}</span>
-                </div>
-                <div class="children">
-                    {walk(p, rel)}
-                </div>
-                """
-            else:
-                size_kb = p.stat().st_size / 1024
-                html += f"""
-                <div class="file">
-                    {FILE_SVG}
-                    <a href="/files/{rel}" data-path="{rel}">{p.name}</a>
-                    <span class="small">({size_kb:.1f} KB)</span>
-                </div>
-                """
-        return html
-
-    return HTMLResponse(f"""
-<!DOCTYPE html>
-<html>
-<head>
-<meta charset="utf-8">
-<title>(～﹃～)~zZ Robotics File Server</title>
-<style>
-:root {{
-  --bg:#0f1115;
-  --panel:#0b0d11;
-  --text:#e5e7eb;
-  --muted:rgba(229,231,235,.6);
-  --border:#374151;
-  --input:#111827;
-  --hover:#1f2937;
-  --ok:#22c55e;
-}}
-
-body {{
-  font-family: system-ui, sans-serif;
-  background:var(--bg);
-  color:var(--text);
-  padding:20px;
-}}
-
-h1 {{ margin:0 0 6px 0; font-size:20px; }}
-a {{ color:#60a5fa; text-decoration:none; }}
-a:hover {{ text-decoration:underline; }}
-
-.panel {{
-  border:1px solid var(--border);
-  padding:12px;
-  margin-bottom:16px;
-  background:var(--panel);
-}}
-
-.small {{ font-size:12px; opacity:.6; color:var(--muted); }}
-
-button,input,textarea {{
-  background:var(--input);
-  color:var(--text);
-  border:1px solid var(--border);
-  padding:6px 8px;
-}}
-
-button:hover {{ background:var(--hover); cursor:pointer; }}
-
-.progress {{ width:100%; height:10px; background:var(--hover); margin-top:8px; }}
-.bar {{ height:100%; width:0%; background:var(--ok); }}
-
-.ico {{
-  width:16px;
-  height:16px;
-  flex:0 0 16px;
-}}
-
-.dir,.file {{
-  display:flex;
-  align-items:center;
-  gap:8px;
-}}
-
-.dir {{
-  cursor:pointer;
-  font-weight:600;
-  margin-top:6px;
-}}
-
-.children {{
-  margin-left:20px;
-  display:none;
-}}
-
-.file {{
-  margin-left:20px;
-  margin-top:4px;
-}}
-
-.folder-icon .ico-open {{
-  display:none;
-}}
-
-.dir.open .folder-icon .ico-closed {{
-  display:none;
-}}
-
-.dir.open .folder-icon .ico-open {{
-  display:inline-block;
-}}
-
-.modal {{
-  position:fixed;
-  inset:0;
-  background:rgba(0,0,0,.75);
-  display:none;
-  align-items:center;
-  justify-content:center;
-}}
-
-.modal-content {{
-  background:var(--panel);
-  border:1px solid var(--border);
-  width:80%;
-  max-width:900px;
-  padding:12px;
-}}
-
-textarea {{
-  width:100%;
-  height:400px;
-  font-family:ui-monospace, monospace;
-}}
-</style>
-</head>
-
-<body>
-
-<h1>Robotics File Server</h1>
-<p class="small">Public reads · Authenticated writes</p>
-
-<div class="panel">
-  <h3 style="margin:0 0 10px 0;">Upload</h3>
-  <input type="file" id="fileInput">
-  <input type="text" id="uploadPath" placeholder="optional/path/filename.ext" style="width:320px;">
-  <button onclick="upload()">Upload</button>
-  <div class="progress"><div class="bar" id="progressBar"></div></div>
-</div>
-
-<div class="panel">
-  <h3 style="margin:0 0 10px 0;">Files</h3>
-  {walk(FILES_DIR)}
-</div>
-
-<div class="modal" id="jsonModal">
-  <div class="modal-content">
-    <h3 id="jsonTitle"></h3>
-    <textarea id="jsonEditor"></textarea>
-    <div style="margin-top:10px;display:flex;gap:8px;align-items:center;">
-      <button onclick="saveJSON()">Save</button>
-      <button onclick="closeJSON()">Close</button>
-      <span class="small" id="jsonStatus"></span>
-    </div>
-  </div>
-</div>
-
-<script>
-let currentJSONPath = null;
-
-// folder toggle + icon swap
-document.querySelectorAll(".dir").forEach(dir => {{
-  dir.onclick = () => {{
-    const next = dir.nextElementSibling;
-    const open = next.style.display === "block";
-    next.style.display = open ? "none" : "block";
-    dir.classList.toggle("open", !open);
-  }};
-}});
-
-// JSON interception
-document.addEventListener("click", e => {{
-  const a = e.target.closest("a[data-path]");
-  if (!a) return;
-  const path = a.dataset.path;
-  if (path.endsWith(".json")) {{
-    e.preventDefault();
-    openJSON(path);
-  }}
-}});
-
-function upload() {{
-  const file = fileInput.files[0];
-  let path = uploadPath.value.trim();
-  if (!file) return alert("Select a file");
-  if (!path) path = file.name;
-
-  const form = new FormData();
-  form.append("file", file);
-
-  const xhr = new XMLHttpRequest();
-  xhr.open("POST", "/upload/" + path);
-  xhr.upload.onprogress = e => {{
-    if (e.lengthComputable)
-      progressBar.style.width = (e.loaded / e.total * 100) + "%";
-  }};
-  xhr.onload = () => location.reload();
-  xhr.send(form);
-}}
-
-function openJSON(path) {{
-  currentJSONPath = path;
-  jsonTitle.textContent = path;
-  fetch("/files/" + path)
-    .then(r => r.text())
-    .then(t => {{
-      jsonEditor.value = JSON.stringify(JSON.parse(t), null, 2);
-      jsonModal.style.display = "flex";
-    }});
-}}
-
-function closeJSON() {{
-  jsonModal.style.display = "none";
-}}
-
-async function saveJSON() {{
-  try {{
-    const data = JSON.parse(jsonEditor.value);
-    const blob = new Blob([JSON.stringify(data, null, 2)], {{ type:"application/json" }});
-    const form = new FormData();
-    form.append("file", blob);
-    const res = await fetch("/upload/" + currentJSONPath, {{
-      method:"POST",
-      body:form
-    }});
-    jsonStatus.textContent = res.ok ? "Saved" : "Save failed";
-  }} catch {{
-    jsonStatus.textContent = "Invalid JSON";
-  }}
-}}
-</script>
-
-</body>
-</html>
-""")
+    html = TEMPLATE.read_text(encoding="utf-8")
+    return HTMLResponse(html.replace("<!-- FILELIST -->", walk(FILES_DIR)))
 
 # =====================
 # PROTECTED: CREATE DIRECTORY
