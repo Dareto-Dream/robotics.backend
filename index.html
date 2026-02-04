@@ -1,69 +1,69 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>File Server</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/index.css">
-</head>
-<body>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>File Server</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/index.css">
+  </head>
+  <body>
 
-<div class="layout">
+    <div class="layout">
 
-  <header class="header">
-    <span class="logo">◆ File Server</span>
-    <span class="logo-org">deltavdevs</span>
-  </header>
+      <header class="header">
+        <span class="logo">◆ File Server</span>
+        <span class="logo-org">deltavdevs</span>
+      </header>
 
-  <div class="toolbar">
-    <input type="search" id="searchInput" class="search" placeholder="Search…" autocomplete="off" spellcheck="false">
-    <div class="toolbar-end">
-      <button class="btn" id="toggleExpand" title="Expand or collapse all">⇅</button>
-      <button class="btn btn-upload" id="uploadTrigger">↑ Upload</button>
+      <div class="toolbar">
+        <input type="search" id="searchInput" class="search" placeholder="Search…" autocomplete="off" spellcheck="false">
+        <div class="toolbar-end">
+          <button class="btn" id="toggleExpand" title="Expand or collapse all">⇅</button>
+          <button class="btn btn-upload" id="uploadTrigger">↑ Upload</button>
+        </div>
+      </div>
+
+      <div class="upload-panel" id="uploadPanel">
+        <input type="file" id="fileInput" hidden>
+        <div class="upload-row">
+          <span class="upload-name" id="uploadName">—</span>
+          <input type="text" id="uploadPath" class="upload-path" placeholder="destination/">
+          <button class="btn btn-primary btn-sm" id="uploadConfirm">Upload</button>
+          <button class="btn btn-sm btn-icon" id="uploadCancel">✕</button>
+        </div>
+        <div class="upload-progress"><div class="upload-bar" id="progressBar"></div></div>
+      </div>
+
+      <div class="tree-container">
+        <div class="file-tree" id="fileTree">
+          <!-- FILELIST -->
+        </div>
+        <div class="empty-state" id="emptyState" style="display:none">No matches</div>
+      </div>
+
     </div>
-  </div>
 
-  <div class="upload-panel" id="uploadPanel">
-    <input type="file" id="fileInput" hidden>
-    <div class="upload-row">
-      <span class="upload-name" id="uploadName">—</span>
-      <input type="text" id="uploadPath" class="upload-path" placeholder="destination/">
-      <button class="btn btn-primary btn-sm" id="uploadConfirm">Upload</button>
-      <button class="btn btn-sm btn-icon" id="uploadCancel">✕</button>
+    <!-- JSON Modal -->
+    <div class="modal-layer" id="jsonModal">
+      <div class="modal">
+        <div class="modal-head">
+          <span class="modal-path" id="jsonTitle"></span>
+          <button class="btn btn-icon btn-sm" onclick="closeJSON()">✕</button>
+        </div>
+        <textarea id="jsonEditor" spellcheck="false"></textarea>
+        <div class="modal-foot">
+          <button class="btn btn-primary btn-sm" onclick="saveJSON()">Save</button>
+          <button class="btn btn-sm" onclick="closeJSON()">Cancel</button>
+          <span class="modal-status" id="jsonStatus"></span>
+        </div>
+      </div>
     </div>
-    <div class="upload-progress"><div class="upload-bar" id="progressBar"></div></div>
-  </div>
 
-  <div class="tree-container">
-    <div class="file-tree" id="fileTree">
-      <!-- FILELIST -->
-    </div>
-    <div class="empty-state" id="emptyState" style="display:none">No matches</div>
-  </div>
+    <!-- Drag overlay -->
+    <div class="drag-overlay" id="dragOverlay"><span>Drop to upload</span></div>
 
-</div>
-
-<!-- JSON Modal -->
-<div class="modal-layer" id="jsonModal">
-  <div class="modal">
-    <div class="modal-head">
-      <span class="modal-path" id="jsonTitle"></span>
-      <button class="btn btn-icon btn-sm" onclick="closeJSON()">✕</button>
-    </div>
-    <textarea id="jsonEditor" spellcheck="false"></textarea>
-    <div class="modal-foot">
-      <button class="btn btn-primary btn-sm" onclick="saveJSON()">Save</button>
-      <button class="btn btn-sm" onclick="closeJSON()">Cancel</button>
-      <span class="modal-status" id="jsonStatus"></span>
-    </div>
-  </div>
-</div>
-
-<!-- Drag overlay -->
-<div class="drag-overlay" id="dragOverlay"><span>Drop to upload</span></div>
-
-<script src="/static/index.js"></script>
-</body>
+    <script src="/static/index.js"></script>
+  </body>
 </html>
