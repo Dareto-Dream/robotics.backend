@@ -9,8 +9,8 @@
   --clMain4: #2c2c2e;
   --clText1: #e5e5e7;
   --clText2: #8e8e93;
-  --clAccent1: #ffffff;
-  --clAccent2: #00f7ff;
+  --clAccent1: #3a5777;
+  --clAccent2: #395783;
   --clAccent3: #392a4d;
 
   --ftSans1: 'IBM Plex Sans', system-ui, sans-serif;
@@ -33,10 +33,13 @@ body {
 }
 
 #header {
-  background-color: var(--clAccent3);
+  background-color: var(--clMain4);
   display: flex;
   width: 100vw;
   height: 5vh;
+  box-sizing: border-box;
+  margin: 0;
+  padding-inline: 1rem;
 }
 #workzone {
   display: flex;
@@ -51,8 +54,63 @@ body {
 .panel {
   display: flex;
   background-color: var(--clMain3);
+  padding: 1rem;
+  border-radius: 1rem;
+  margin: 1rem;
 }
 #panel-full {
-  width: 100%;
+  height: 100%;
+  flex: 1;
+}
+#panel-left {
+  flex: 1;
   height: 100%;
 }
+#panel-right {
+  flex: 1;
+  height: 100%;
+}
+
+.navbtn {
+		height: 100%;
+		padding-inline: 1rem;
+		font-family: var(--ftSans1);
+		font-weight: bold;
+		font-size: clamp(1rem, 1vw, 2rem);
+		border: 0;
+		background-color: transparent;
+		color: var(--clText1);
+		cursor: pointer;
+		position: relative;
+		overflow: hidden;
+		transition: color 0.3s ease;
+		z-index: 1;
+		text-align: center;
+		display: flex;
+		align-items: center;
+		text-decoration: none;
+	}
+	.navbtn::after {
+		content: '';
+		position: absolute;
+		bottom: 0;
+		left: 0;
+		width: 100%;
+		height: 4px;
+		background-color: var(--clAccent1);
+		z-index: -1;
+	}
+	.navbtn::before {
+		content: '';
+		position: absolute;
+		bottom: 0;
+		left: 0;
+		width: 100%;
+		height: 0;
+		background-color: var(--clAccent2);
+		transition: height 0.3s ease;
+		z-index: -1;
+	}
+	.navbtn:hover::before {
+		height: 100%;
+	}
