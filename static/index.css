@@ -49,7 +49,7 @@ html, body { height: 100%; overflow: hidden; }
 
 body {
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 2rem;
   line-height: 1.5;
   color: var(--text-primary);
   background: var(--bg-primary);
