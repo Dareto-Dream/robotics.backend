@@ -10,7 +10,7 @@ app = Flask(__name__)
 
 CORS(
     app,
-    origins=["http://localhost", "https://robotics.deltavdevs.com"],
+    origins=["http://localhost", "https://robotics.deltavdevs.com", "https://tryingflutter-web-deploy-production.up.railway.app"],
     supports_credentials=True,
     allow_headers=["Authorization", "Content-Type", "X-User-Id"],
 )
