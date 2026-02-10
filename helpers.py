@@ -5,7 +5,7 @@ import os
 BASE_DIR = Path(__file__).parent
 FILES_DIR = BASE_DIR / "files"
 STATIC_DIR = BASE_DIR / "static"
-TEMPLATE = BASE_DIR / "templates" / "index.html"
+TEMPLATE = BASE_DIR  / "index.html"
 
 # Authentication credentials (in production, use environment variables)
 USERNAME = os.environ.get("API_USERNAME", "admin")
