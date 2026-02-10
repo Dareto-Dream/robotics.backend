@@ -12,7 +12,7 @@ CORS(
     app,
     origins=["http://localhost", "https://robotics.deltavdevs.com"],
     supports_credentials=True,
-    allow_headers=["Authorization", "Content-Type", "X-Session-Token"],
+    allow_headers=["Authorization", "Content-Type", "X-User-Id"],
 )
 
 
