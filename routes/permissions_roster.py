@@ -1,25 +1,32 @@
 """
-permissions_roster.py — Server-authoritative permission & roster system
+permissions_roster.py — Server-authoritative team, permission, & roster system
 
-Architecture:
-  - Basic Auth (Authorization header) = shared backend credential, one per deployment
-  - X-User-Id header = per-device user identity (UUID generated on first launch)
-  - Teams are the organizational unit; each has a 6-char join code
-  - Roles are assigned per-member within a team
-  - Permissions are computed server-side from role and returned to the client
-  - The client NEVER computes its own permissions; it caches what the server sends
+Identity model:
+  - Authorization: Basic <credential>  →  shared backend credential (one per deployment)
+  - X-User-Id: <uuid>                  →  per-device user identity (generated on first app launch)
+
+Data model:
+  - Teams are the organisational unit.  Each has a unique 6-char join code.
+  - Members belong to exactly one team.  Membership is keyed by the user's UUID.
+  - Roles are assigned per-member.  Permissions are computed from the role on the server
+    and returned to the client.  The client NEVER computes permissions locally.
+
+Lifecycle:
+  1. Creator calls POST /api/teams/create  → server generates join code, adds creator as owner.
+  2. Others call   POST /api/teams/join    → server validates code, adds member as scout.
+  3. Member calls  POST /api/teams/leave   → server marks them inactive, cleans up empty teams.
+  4. Every sync    POST /api/auth/sync     → server returns role + permissions + team + roster.
 """
 
-from flask import Blueprint, request, jsonify, abort
+from flask import Blueprint, request, jsonify
 from functools import wraps
 from datetime import datetime
 import secrets
-import uuid
 from helpers import USERNAME, PASSWORD
 
 permissions_roster = Blueprint('permissions_roster', __name__)
 
-# ==================== ROLE & PERMISSION DEFINITIONS ====================
+# ━━━━━━━━━━━━━━━ ROLE & PERMISSION DEFINITIONS ━━━━━━━━━━━━━━━━
 
 ROLES = {
     "viewer":     {"level": 0, "name": "Viewer",      "description": "Read-only access"},
@@ -90,184 +97,222 @@ GUEST_PERMISSIONS = [
 ]
 
 
-# ==================== IN-MEMORY STORAGE ====================
-# Replace with a real database in production.
+# ━━━━━━━━━━━━━━━━ IN-MEMORY STORAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━
 #
 # teams[team_code] = {
-#     team_code, name, team_number, description, created_by, created_at,
-#     members: { user_id: { user_id, username, display_name, bio,
-#         profile_pic_url, role, subteam, joined_at, is_active } }
+#     "team_code": str,           # 6-char join code (also the dict key)
+#     "name": str,                # display name chosen by creator
+#     "team_number": str,         # FRC team number
+#     "description": str,
+#     "created_by": str,          # UUID of the creator
+#     "created_at": str,          # ISO timestamp
+#     "members": {
+#         <user_uuid>: {
+#             "user_id": str,     # same UUID
+#             "username": str,
+#             "display_name": str,
+#             "bio": str,
+#             "profile_pic_url": str,
+#             "role": str,        # one of ROLES keys
+#             "subteam": str,
+#             "joined_at": str,
+#             "is_active": bool,  # False = left / removed
+#         }
+#     }
 # }
 teams = {}
 
-# user_team_map[user_id] = team_code  (quick reverse lookup)
+# Reverse lookup:  user_uuid  ->  team_code
+# Only contains *active* members.
 user_team_map = {}
 
 
-# ==================== AUTH HELPERS ====================
+# ━━━━━━━━━━━━━━━━━━━ AUTH HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-def check_auth(username, password):
-    """Validate the shared backend credential."""
-    return (secrets.compare_digest(username, USERNAME)
-            and secrets.compare_digest(password, PASSWORD))
+def _check_auth(user, pw):
+    return (secrets.compare_digest(user, USERNAME)
+            and secrets.compare_digest(pw, PASSWORD))
 
 
 def requires_auth(f):
-    """Require the shared Basic Auth credential on the request."""
+    """Verify the shared Basic-Auth credential."""
     @wraps(f)
-    def decorated(*args, **kwargs):
+    def wrapper(*args, **kwargs):
         auth = request.authorization
-        if not auth or not check_auth(auth.username, auth.password):
+        if not auth or not _check_auth(auth.username, auth.password):
             return jsonify({"detail": "Invalid credentials"}), 401, {
-                "WWW-Authenticate": 'Basic realm="Login Required"'
-            }
+                "WWW-Authenticate": 'Basic realm="Login Required"'}
         return f(*args, **kwargs)
-    return decorated
+    return wrapper
 
 
-def get_user_id():
-    """Extract per-user identity from the X-User-Id header."""
-    return request.headers.get("X-User-Id", "").strip() or None
+def _get_user_id():
+    """Read the per-device UUID from the X-User-Id header."""
+    return (request.headers.get("X-User-Id") or "").strip() or None
 
 
-def get_user_team(user_id):
+def _get_user_team(user_id):
     """Return (team_code, team_dict, member_dict) or (None, None, None)."""
-    team_code = user_team_map.get(user_id)
-    if not team_code or team_code not in teams:
-        return None, None, None
-    team = teams[team_code]
-    member = team["members"].get(user_id)
-    return team_code, team, member
+    code = user_team_map.get(user_id)
+    if code and code in teams:
+        team = teams[code]
+        member = team["members"].get(user_id)
+        if member and member.get("is_active", False):
+            return code, team, member
+    return None, None, None
 
 
-def resolve_permissions(user_id):
-    """Return (role_str, permissions_list) for a user based on team membership."""
-    _, _, member = get_user_team(user_id)
-    if member is None or not member.get("is_active", True):
+def _resolve_permissions(user_id):
+    """Compute (role_str, permissions_list) from membership."""
+    _, _, member = _get_user_team(user_id)
+    if member is None:
         return "viewer", list(GUEST_PERMISSIONS)
     role = member.get("role", "viewer")
     return role, list(ROLE_PERMISSIONS.get(role, GUEST_PERMISSIONS))
 
 
 def requires_permission(perm_key):
-    """Decorator: reject the request if the user lacks a specific permission."""
+    """Decorator: 403 if the calling user lacks perm_key."""
     def decorator(f):
         @wraps(f)
-        def decorated(*args, **kwargs):
-            user_id = get_user_id()
-            if not user_id:
+        def wrapper(*args, **kwargs):
+            uid = _get_user_id()
+            if not uid:
                 return jsonify({"detail": "X-User-Id header required"}), 401
-            _, perms = resolve_permissions(user_id)
+            _, perms = _resolve_permissions(uid)
             if perm_key not in perms:
-                return jsonify({
-                    "detail": f"Permission denied: requires '{perm_key}'",
-                }), 403
+                return jsonify({"detail": f"Permission denied: requires '{perm_key}'"}), 403
             return f(*args, **kwargs)
-        return decorated
+        return wrapper
     return decorator
 
 
+# ━━━━━━━━━━━━━━━━━━ TEAM HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_JOIN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O/1/I
+
+
 def _generate_join_code():
-    """Generate a 6-character alphanumeric join code (no ambiguous chars)."""
-    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-    return "".join(secrets.choice(alphabet) for _ in range(6))
+    """Create a unique 6-char code that is not already in use."""
+    for _ in range(100):
+        code = "".join(secrets.choice(_JOIN_ALPHABET) for _ in range(6))
+        if code not in teams:
+            return code
+    raise RuntimeError("Could not generate unique join code")
 
 
-def _member_to_json(member):
-    """Convert internal member dict to the JSON shape the Flutter client expects."""
-    role = member.get("role", "viewer")
+def _active_member_count(team):
+    return sum(1 for m in team["members"].values() if m.get("is_active"))
+
+
+def _cleanup_empty_teams():
+    """Delete every team that has zero active members."""
+    empty = [code for code, t in teams.items() if _active_member_count(t) == 0]
+    for code in empty:
+        del teams[code]
+    # Scrub stale entries from user_team_map
+    stale = [uid for uid, c in user_team_map.items() if c not in teams]
+    for uid in stale:
+        del user_team_map[uid]
+
+
+def _member_json(m):
+    """Internal member dict -> JSON shape the Flutter client expects."""
     return {
-        "id": member.get("user_id", ""),
-        "username": member.get("username", ""),
-        "displayName": member.get("display_name", ""),
-        "bio": member.get("bio", ""),
-        "profilePicUrl": member.get("profile_pic_url", ""),
-        "role": role,
-        "subteam": member.get("subteam", ""),
-        "joinedAt": member.get("joined_at", ""),
-        "isActive": member.get("is_active", True),
+        "id":             m.get("user_id", ""),
+        "username":       m.get("username", ""),
+        "displayName":    m.get("display_name", ""),
+        "bio":            m.get("bio", ""),
+        "profilePicUrl":  m.get("profile_pic_url", ""),
+        "role":           m.get("role", "viewer"),
+        "subteam":        m.get("subteam", ""),
+        "joinedAt":       m.get("joined_at", ""),
+        "isActive":       m.get("is_active", False),
     }
 
 
-def _team_to_json(team):
-    """Convert internal team dict to the JSON shape the Flutter client expects."""
+def _team_json(t):
     return {
-        "team_code": team["team_code"],
-        "name": team["name"],
-        "team_number": team["team_number"],
-        "description": team.get("description", ""),
+        "team_code":    t["team_code"],
+        "name":         t["name"],
+        "team_number":  t["team_number"],
+        "description":  t.get("description", ""),
     }
 
 
-# ==================== AUTH / SYNC ENDPOINT ====================
+# ━━━━━━━━━━━━━━━━━ AUTH / SYNC ENDPOINT ━━━━━━━━━━━━━━━━━━━━━━
 
 @permissions_roster.route('/auth/sync', methods=['POST'])
 @requires_auth
 def auth_sync():
     """
     POST /api/auth/sync
-    Primary sync endpoint. Called by the Flutter app on every sync cycle.
-    Returns the user's current role, permission set, team info, and roster.
 
-    Headers:
-        Authorization: Basic <credential>
-        X-User-Id: <device UUID>
+    Primary sync endpoint.  Called by the Flutter app on every periodic
+    sync and on startup.  Returns the caller's role, full permission set,
+    team info, and complete active roster.
 
-    Body (optional): { "username": "string" }
+    Headers:   Authorization (Basic),   X-User-Id (device UUID)
+    Body:      { "username": "..." }  (optional, kept in roster)
 
-    Response 200: {
-        "user_id", "role", "permissions": [...],
-        "team": { team_code, name, team_number, description } | null,
-        "roster": [ { member }, ... ] | null
-    }
+    200  { user_id, role, permissions[], team|null, roster[]|null }
     """
-    user_id = get_user_id()
-    if not user_id:
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
 
     body = request.json or {}
     username = body.get("username", "")
 
-    # Update username in roster if the user is on a team
-    _, team, member = get_user_team(user_id)
-    if member is not None and username:
+    # Housekeeping: remove any abandoned teams
+    _cleanup_empty_teams()
+
+    # If user is on a team, keep their username fresh
+    _, team, member = _get_user_team(uid)
+    if member and username:
         member["username"] = username
 
-    role, permissions = resolve_permissions(user_id)
+    role, permissions = _resolve_permissions(uid)
 
     resp = {
-        "user_id": user_id,
-        "role": role,
+        "user_id":     uid,
+        "role":        role,
         "permissions": permissions,
-        "team": None,
-        "roster": None,
+        "team":        None,
+        "roster":      None,
     }
 
     if team is not None:
-        resp["team"] = _team_to_json(team)
+        resp["team"] = _team_json(team)
         resp["roster"] = [
-            _member_to_json(m) for m in team["members"].values()
-            if m.get("is_active", True)
+            _member_json(m) for m in team["members"].values()
+            if m.get("is_active")
         ]
 
     return jsonify(resp)
 
 
-# ==================== TEAM ENDPOINTS ====================
+# ━━━━━━━━━━━━━━━━━━ TEAM ENDPOINTS ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @permissions_roster.route('/teams/create', methods=['POST'])
 @requires_auth
 def create_team():
     """
     POST /api/teams/create
-    Create a new team. The creator becomes the owner.
 
-    Body: { "name", "team_number", "username", "display_name"? }
-    Response 201: { success, team: {...}, role, permissions: [...] }
+    Create a new team.  The caller's UUID (X-User-Id) becomes the owner.
+
+    Body:  { name, team_number, username, display_name? }
+    201   { success, team{}, role, permissions[] }
     """
-    user_id = get_user_id()
-    if not user_id:
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
+
+    # Must not already be on a team
+    _, existing_team, existing_member = _get_user_team(uid)
+    if existing_team is not None:
+        return jsonify({"detail": "Already on a team. Leave first."}), 409
 
     body = request.json or {}
     name = body.get("name", "").strip()
@@ -278,46 +323,38 @@ def create_team():
     if not name:
         return jsonify({"detail": "Team name is required"}), 400
 
-    if user_id in user_team_map:
-        return jsonify({"detail": "Already on a team. Leave current team first."}), 409
-
-    join_code = _generate_join_code()
-    while join_code in teams:
-        join_code = _generate_join_code()
-
+    code = _generate_join_code()
     now = datetime.now().isoformat()
 
-    team = {
-        "team_code": join_code,
-        "name": name,
+    teams[code] = {
+        "team_code":   code,
+        "name":        name,
         "team_number": team_number,
         "description": "",
-        "created_by": user_id,
-        "created_at": now,
+        "created_by":  uid,
+        "created_at":  now,
         "members": {
-            user_id: {
-                "user_id": user_id,
-                "username": username,
-                "display_name": display_name,
-                "bio": "",
+            uid: {
+                "user_id":         uid,
+                "username":        username,
+                "display_name":    display_name,
+                "bio":             "",
                 "profile_pic_url": "",
-                "role": "owner",
-                "subteam": "",
-                "joined_at": now,
-                "is_active": True,
+                "role":            "owner",
+                "subteam":         "",
+                "joined_at":       now,
+                "is_active":       True,
             }
         },
     }
+    user_team_map[uid] = code
 
-    teams[join_code] = team
-    user_team_map[user_id] = join_code
-
-    role, permissions = resolve_permissions(user_id)
+    role, permissions = _resolve_permissions(uid)
 
     return jsonify({
-        "success": True,
-        "team": _team_to_json(team),
-        "role": role,
+        "success":     True,
+        "team":        _team_json(teams[code]),
+        "role":        role,
         "permissions": permissions,
     }), 201
 
@@ -327,62 +364,66 @@ def create_team():
 def join_team():
     """
     POST /api/teams/join
-    Join an existing team via 6-character join code. New members get 'scout'.
-    If the user was previously a member, they are reactivated with their old role.
 
-    Body: { "team_code", "username", "display_name"? }
-    Response 200: { success, team: {...}, role, permissions: [...] }
+    Join an existing team via its 6-char join code.  The caller's UUID
+    (X-User-Id) is added as a scout.  If they previously left, they are
+    reactivated with their old role.
+
+    Body:  { team_code, username, display_name? }
+    200   { success, team{}, role, permissions[] }
     """
-    user_id = get_user_id()
-    if not user_id:
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
 
+    # Must not already be on a team
+    _, existing_team, _ = _get_user_team(uid)
+    if existing_team is not None:
+        return jsonify({"detail": "Already on a team. Leave first."}), 409
+
     body = request.json or {}
-    team_code = body.get("team_code", "").strip().upper()
+    code = body.get("team_code", "").strip().upper()
     username = body.get("username", "").strip()
     display_name = body.get("display_name", "").strip() or username
 
-    if not team_code:
+    if not code:
         return jsonify({"detail": "Team code is required"}), 400
-
-    if team_code not in teams:
+    if code not in teams:
         return jsonify({"detail": "Invalid team code"}), 404
 
-    if user_id in user_team_map:
-        return jsonify({"detail": "Already on a team. Leave current team first."}), 409
-
-    team = teams[team_code]
+    team = teams[code]
     now = datetime.now().isoformat()
 
-    # Rejoin: reactivate if user was previously a member
-    if user_id in team["members"]:
-        existing = team["members"][user_id]
-        existing["is_active"] = True
+    # Returning member?  Reactivate with their previous role.
+    if uid in team["members"]:
+        prev = team["members"][uid]
+        prev["is_active"] = True
         if username:
-            existing["username"] = username
+            prev["username"] = username
         if display_name:
-            existing["display_name"] = display_name
+            prev["display_name"] = display_name
     else:
-        team["members"][user_id] = {
-            "user_id": user_id,
-            "username": username,
-            "display_name": display_name,
-            "bio": "",
+        # Brand-new member -> scout
+        team["members"][uid] = {
+            "user_id":         uid,
+            "username":        username,
+            "display_name":    display_name,
+            "bio":             "",
             "profile_pic_url": "",
-            "role": "scout",
-            "subteam": "",
-            "joined_at": now,
-            "is_active": True,
+            "role":            "scout",
+            "subteam":         "",
+            "joined_at":       now,
+            "is_active":       True,
         }
 
-    user_team_map[user_id] = team_code
+    user_team_map[uid] = code
 
-    role, permissions = resolve_permissions(user_id)
+    role, permissions = _resolve_permissions(uid)
 
     return jsonify({
-        "success": True,
-        "team": _team_to_json(team),
-        "role": role,
+        "success":     True,
+        "team":        _team_json(team),
+        "role":        role,
         "permissions": permissions,
     })
 
@@ -392,88 +433,91 @@ def join_team():
 def leave_team():
     """
     POST /api/teams/leave
-    Leave the current team. Member is marked inactive (preserves history).
-    Returns guest permissions.
 
-    Response 200: { success, message, role: "viewer", permissions: [guest] }
+    Leave the current team.  Member is marked inactive (history preserved).
+    If zero active members remain, the team is automatically deleted.
+
+    200  { success, message, role, permissions[] }
     """
-    user_id = get_user_id()
-    if not user_id:
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
 
-    _, team, member = get_user_team(user_id)
+    _, team, member = _get_user_team(uid)
     if team is None or member is None:
         return jsonify({"detail": "Not on a team"}), 404
 
+    team_name = team["name"]
+
+    # Deactivate
     member["is_active"] = False
-    user_team_map.pop(user_id, None)
+    user_team_map.pop(uid, None)
+
+    # Auto-delete if nobody active is left
+    _cleanup_empty_teams()
 
     return jsonify({
-        "success": True,
-        "message": f"Left team {team['name']}",
-        "role": "viewer",
+        "success":     True,
+        "message":     f"Left team {team_name}",
+        "role":        "viewer",
         "permissions": list(GUEST_PERMISSIONS),
     })
 
 
 @permissions_roster.route('/teams/info', methods=['GET'])
 @requires_auth
-def get_team_info():
-    """GET /api/teams/info — info about the caller's current team."""
-    user_id = get_user_id()
-    if not user_id:
+def team_info():
+    """GET /api/teams/info"""
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-
-    _, team, _ = get_user_team(user_id)
+    _, team, _ = _get_user_team(uid)
     if team is None:
         return jsonify({"detail": "Not on a team"}), 404
-
-    active = sum(1 for m in team["members"].values() if m.get("is_active", True))
-    return jsonify({**_team_to_json(team), "created_at": team["created_at"], "member_count": active})
+    return jsonify({
+        **_team_json(team),
+        "created_at":   team["created_at"],
+        "member_count": _active_member_count(team),
+    })
 
 
 @permissions_roster.route('/teams/update', methods=['PUT'])
 @requires_auth
 @requires_permission("edit_team_settings")
-def update_team_info():
-    """PUT /api/teams/update — edit team name/number/description."""
-    user_id = get_user_id()
-    if not user_id:
+def update_team():
+    """PUT /api/teams/update"""
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-
-    _, team, _ = get_user_team(user_id)
+    _, team, _ = _get_user_team(uid)
     if team is None:
         return jsonify({"detail": "Not on a team"}), 404
-
     body = request.json or {}
-    for field in ("name", "team_number", "description"):
-        if field in body:
-            team[field] = body[field]
+    for key in ("name", "team_number", "description"):
+        if key in body:
+            team[key] = body[key]
+    return jsonify({"success": True, "team": _team_json(team)})
 
-    return jsonify({"success": True, "team": _team_to_json(team)})
 
-
-# ==================== ROSTER ENDPOINTS ====================
+# ━━━━━━━━━━━━━━━━━━ ROSTER ENDPOINTS ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @permissions_roster.route('/roster', methods=['GET'])
 @requires_auth
 @requires_permission("view_roster")
 def get_roster():
-    """GET /api/roster — all active members on the caller's team."""
-    user_id = get_user_id()
-    if not user_id:
+    """GET /api/roster"""
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-
-    _, team, _ = get_user_team(user_id)
+    _, team, _ = _get_user_team(uid)
     if team is None:
         return jsonify({"detail": "Not on a team"}), 404
-
     members = [
-        _member_to_json(m) for m in team["members"].values()
-        if m.get("is_active", True)
+        _member_json(m) for m in team["members"].values()
+        if m.get("is_active")
     ]
     members.sort(key=lambda x: (
-        -ROLES.get(x.get("role", "viewer"), {}).get("level", 0),
+        -ROLES.get(x["role"], {}).get("level", 0),
         x.get("displayName", ""),
     ))
     return jsonify({"count": len(members), "members": members})
@@ -482,146 +526,122 @@ def get_roster():
 @permissions_roster.route('/roster/me', methods=['GET'])
 @requires_auth
 def get_own_profile():
-    """GET /api/roster/me — caller's own roster profile."""
-    user_id = get_user_id()
-    if not user_id:
+    """GET /api/roster/me"""
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-    _, _, member = get_user_team(user_id)
+    _, _, member = _get_user_team(uid)
     if member is None:
         return jsonify({"detail": "Not on a team"}), 404
-    return jsonify(_member_to_json(member))
+    return jsonify(_member_json(member))
 
 
 @permissions_roster.route('/roster/me', methods=['PUT'])
 @requires_auth
 def update_own_profile():
-    """PUT /api/roster/me — update own display_name, bio, subteam, profile_pic_url."""
-    user_id = get_user_id()
-    if not user_id:
+    """PUT /api/roster/me"""
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-    _, _, member = get_user_team(user_id)
+    _, _, member = _get_user_team(uid)
     if member is None:
         return jsonify({"detail": "Not on a team"}), 404
-
     body = request.json or {}
-    field_map = {
-        "display_name": "display_name", "displayName": "display_name",
-        "bio": "bio", "subteam": "subteam",
-        "profile_pic_url": "profile_pic_url", "profilePicUrl": "profile_pic_url",
-    }
-    for req_key, int_key in field_map.items():
-        if req_key in body:
-            member[int_key] = body[req_key]
-
-    return jsonify({"success": True, "member": _member_to_json(member)})
+    _apply_profile_fields(member, body)
+    return jsonify({"success": True, "member": _member_json(member)})
 
 
 @permissions_roster.route('/roster/register', methods=['POST'])
 @requires_auth
-def register_roster_member():
-    """POST /api/roster/register — legacy profile update endpoint (Flutter push queue compat)."""
-    user_id = get_user_id()
-    if not user_id:
+def register_profile():
+    """POST /api/roster/register  (Flutter push-queue compat)"""
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-    _, _, member = get_user_team(user_id)
+    _, _, member = _get_user_team(uid)
     if member is None:
-        # User isn't on a team — silently accept so the push queue drains
+        # Not on a team: accept silently so the push queue drains
         return jsonify({"success": True, "member": None}), 200
-
     body = request.json or {}
-    field_map = {
+    _apply_profile_fields(member, body)
+    return jsonify({"success": True, "member": _member_json(member)}), 201
+
+
+def _apply_profile_fields(member, body):
+    mapping = {
         "display_name": "display_name", "displayName": "display_name",
         "bio": "bio", "subteam": "subteam",
         "profile_pic_url": "profile_pic_url", "profilePicUrl": "profile_pic_url",
     }
-    for req_key, int_key in field_map.items():
+    for req_key, int_key in mapping.items():
         if req_key in body:
             member[int_key] = body[req_key]
 
-    return jsonify({"success": True, "member": _member_to_json(member)}), 201
 
-
-@permissions_roster.route('/roster/<target_user_id>/role', methods=['PUT'])
+@permissions_roster.route('/roster/<target_id>/role', methods=['PUT'])
 @requires_auth
 @requires_permission("manage_roles")
-def update_member_role(target_user_id):
-    """
-    PUT /api/roster/{user_id}/role
-    Change a team member's role. Cannot promote above your own level.
-    Cannot demote the owner unless you are also an owner.
-
-    Body: { "role": "scout" | "leadScout" | ... }
-    Response 200: { success, user_id, role, permissions }
-    """
-    user_id = get_user_id()
-    if not user_id:
+def update_member_role(target_id):
+    """PUT /api/roster/{uuid}/role"""
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-
-    _, team, caller = get_user_team(user_id)
-    if team is None or caller is None:
+    _, team, caller = _get_user_team(uid)
+    if team is None:
         return jsonify({"detail": "Not on a team"}), 404
-
-    if target_user_id not in team["members"]:
+    if target_id not in team["members"]:
         return jsonify({"detail": "Member not found"}), 404
-
-    target = team["members"][target_user_id]
-    if not target.get("is_active", True):
+    target = team["members"][target_id]
+    if not target.get("is_active"):
         return jsonify({"detail": "Member is inactive"}), 404
-
     body = request.json or {}
     new_role = body.get("role", "")
     if new_role not in ROLES:
-        return jsonify({"detail": f"Invalid role. Must be one of: {list(ROLES.keys())}"}), 400
-
+        return jsonify({"detail": f"Invalid role. Valid: {list(ROLES.keys())}"}), 400
     caller_level = ROLES.get(caller["role"], {}).get("level", 0)
     if ROLES[new_role]["level"] > caller_level:
         return jsonify({"detail": "Cannot assign a role higher than your own"}), 403
-
     if target["role"] == "owner" and caller["role"] != "owner":
         return jsonify({"detail": "Cannot demote the team owner"}), 403
-
     target["role"] = new_role
-
     return jsonify({
-        "success": True,
-        "user_id": target_user_id,
-        "role": new_role,
+        "success":     True,
+        "user_id":     target_id,
+        "role":        new_role,
         "permissions": ROLE_PERMISSIONS.get(new_role, GUEST_PERMISSIONS),
     })
 
 
-@permissions_roster.route('/roster/<target_user_id>', methods=['DELETE'])
+@permissions_roster.route('/roster/<target_id>', methods=['DELETE'])
 @requires_auth
 @requires_permission("manage_roster")
-def remove_roster_member(target_user_id):
-    """DELETE /api/roster/{user_id} — remove a member (mark inactive)."""
-    user_id = get_user_id()
-    if not user_id:
+def remove_member(target_id):
+    """DELETE /api/roster/{uuid}"""
+    uid = _get_user_id()
+    if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-
-    _, team, _ = get_user_team(user_id)
+    _, team, _ = _get_user_team(uid)
     if team is None:
         return jsonify({"detail": "Not on a team"}), 404
-    if target_user_id not in team["members"]:
+    if target_id not in team["members"]:
         return jsonify({"detail": "Member not found"}), 404
-    if target_user_id == user_id:
-        return jsonify({"detail": "Cannot remove yourself. Use /teams/leave."}), 400
-
-    target = team["members"][target_user_id]
+    if target_id == uid:
+        return jsonify({"detail": "Use /teams/leave to remove yourself"}), 400
+    target = team["members"][target_id]
     if target["role"] == "owner":
         return jsonify({"detail": "Cannot remove the team owner"}), 403
-
     target["is_active"] = False
-    user_team_map.pop(target_user_id, None)
+    user_team_map.pop(target_id, None)
+    _cleanup_empty_teams()
     return jsonify({"success": True, "message": "Member removed"})
 
 
-# ==================== PERMISSION QUERY ENDPOINTS ====================
+# ━━━━━━━━━━━━━━━ PERMISSION QUERY ENDPOINTS ━━━━━━━━━━━━━━━━━━
 
 @permissions_roster.route('/permissions/roles', methods=['GET'])
 @requires_auth
 def get_roles():
-    """GET /api/permissions/roles — all role definitions with permission lists."""
+    """GET /api/permissions/roles"""
     return jsonify({
         "roles": [
             {
@@ -636,29 +656,29 @@ def get_roles():
 
 @permissions_roster.route('/permissions/guest', methods=['GET'])
 def get_guest_permissions():
-    """GET /api/permissions/guest — guest defaults (no auth required)."""
+    """GET /api/permissions/guest (no auth needed)"""
     return jsonify({"role": "viewer", "permissions": GUEST_PERMISSIONS})
 
 
-# ==================== ADMIN ENDPOINTS ====================
+# ━━━━━━━━━━━━━━━━━━━ ADMIN ENDPOINTS ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @permissions_roster.route('/admin/stats', methods=['GET'])
 @requires_auth
 @requires_permission("view_admin")
-def get_admin_stats():
-    """GET /api/admin/stats — aggregate system statistics."""
-    total_members = 0
-    role_counts = {}
+def admin_stats():
+    """GET /api/admin/stats"""
+    _cleanup_empty_teams()
+    total = 0
+    by_role = {}
     for t in teams.values():
         for m in t["members"].values():
-            if m.get("is_active", True):
-                total_members += 1
+            if m.get("is_active"):
+                total += 1
                 r = m.get("role", "viewer")
-                role_counts[r] = role_counts.get(r, 0) + 1
-
+                by_role[r] = by_role.get(r, 0) + 1
     return jsonify({
-        "teams": len(teams),
-        "total_members": total_members,
-        "by_role": role_counts,
-        "timestamp": datetime.now().isoformat(),
+        "teams":         len(teams),
+        "total_members": total,
+        "by_role":       by_role,
+        "timestamp":     datetime.now().isoformat(),
     })

@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 import secrets
 import requests
 from helpers import USERNAME, PASSWORD
-from routes.permissions_roster import requires_permission, get_user_id
 import os
 
 api = Blueprint('api', __name__)
@@ -52,14 +51,12 @@ def get_frc_api_headers():
     }
 
 def is_cache_valid(cache_entry, ttl):
-    """Check if cached data is still valid"""
     if cache_entry.get("data") is None or cache_entry.get("timestamp") is None:
         return False
     age = (datetime.now() - cache_entry["timestamp"]).total_seconds()
     return age < ttl
 
 def fetch_from_frc_api(endpoint):
-    """Fetch data from FRC API with error handling"""
     try:
         url = f"{FRC_API_BASE}/{endpoint}"
         response = requests.get(url, headers=get_frc_api_headers(), timeout=10)
@@ -74,10 +71,6 @@ def fetch_from_frc_api(endpoint):
 @api.route('/events', methods=['GET'])
 @requires_auth
 def get_events():
-    """
-    GET /api/events
-    List all FRC events for the season. Cache: 6 hours.
-    """
     if is_cache_valid(cache["events"], cache["events"]["ttl"]):
         return jsonify(cache["events"]["data"])
 
@@ -96,10 +89,6 @@ def get_events():
 @api.route('/events/<event_code>/teams', methods=['GET'])
 @requires_auth
 def get_event_teams(event_code):
-    """
-    GET /api/events/{code}/teams
-    Teams registered for a specific event. Cache: 12 hours.
-    """
     cache_key = event_code
     ttl = 12 * 3600
 
@@ -120,10 +109,6 @@ def get_event_teams(event_code):
 @api.route('/events/<event_code>/matches', methods=['GET'])
 @requires_auth
 def get_event_matches(event_code):
-    """
-    GET /api/events/{code}/matches
-    Match schedule and results. Cache: 30 minutes.
-    """
     cache_key = event_code
     ttl = 30 * 60
 
@@ -146,19 +131,15 @@ def get_event_matches(event_code):
 @api.route('/modules/manifest', methods=['GET'])
 @requires_auth
 def get_modules_manifest():
-    """GET /api/modules/manifest — module manifest. Cache: 1 day."""
     if is_cache_valid(cache["modules_manifest"], cache["modules_manifest"]["ttl"]):
         return jsonify(cache["modules_manifest"]["data"])
 
     manifest = {
         "version": "1.0",
         "modules": [
-            {"id": "auto_scoring", "name": "Autonomous Scoring", "version": "2024.1",
-             "description": "Track autonomous period scoring"},
-            {"id": "teleop_performance", "name": "Teleop Performance", "version": "2024.1",
-             "description": "Track teleoperated period performance"},
-            {"id": "pit_scouting", "name": "Pit Scouting", "version": "2024.1",
-             "description": "Robot capabilities and pit observations"},
+            {"id": "auto_scoring",        "name": "Autonomous Scoring",  "version": "2024.1", "description": "Track autonomous period scoring"},
+            {"id": "teleop_performance",   "name": "Teleop Performance",  "version": "2024.1", "description": "Track teleoperated period performance"},
+            {"id": "pit_scouting",         "name": "Pit Scouting",        "version": "2024.1", "description": "Robot capabilities and pit observations"},
         ]
     }
 
@@ -169,9 +150,7 @@ def get_modules_manifest():
 @api.route('/modules/<module_id>', methods=['GET'])
 @requires_auth
 def get_module_definition(module_id):
-    """GET /api/modules/{id} — individual module definition. Cache: 1 day."""
     ttl = 24 * 3600
-
     if module_id in cache["modules"] and is_cache_valid(cache["modules"][module_id], ttl):
         return jsonify(cache["modules"][module_id]["data"])
 
@@ -179,17 +158,17 @@ def get_module_definition(module_id):
         "auto_scoring": {
             "id": "auto_scoring",
             "fields": [
-                {"name": "mobility", "type": "boolean", "label": "Left Starting Zone"},
-                {"name": "auto_high", "type": "number", "label": "Auto High Goals"},
-                {"name": "auto_low", "type": "number", "label": "Auto Low Goals"}
+                {"name": "mobility",  "type": "boolean", "label": "Left Starting Zone"},
+                {"name": "auto_high", "type": "number",  "label": "Auto High Goals"},
+                {"name": "auto_low",  "type": "number",  "label": "Auto Low Goals"},
             ]
         },
         "teleop_performance": {
             "id": "teleop_performance",
             "fields": [
-                {"name": "teleop_high", "type": "number", "label": "Teleop High Goals"},
-                {"name": "teleop_low", "type": "number", "label": "Teleop Low Goals"},
-                {"name": "defense_rating", "type": "rating", "label": "Defense Rating", "max": 5}
+                {"name": "teleop_high",     "type": "number", "label": "Teleop High Goals"},
+                {"name": "teleop_low",      "type": "number", "label": "Teleop Low Goals"},
+                {"name": "defense_rating",  "type": "rating", "label": "Defense Rating", "max": 5},
             ]
         },
         "pit_scouting": {
@@ -198,9 +177,9 @@ def get_module_definition(module_id):
                 {"name": "drivetrain", "type": "select", "label": "Drivetrain Type",
                  "options": ["Tank", "Mecanum", "Swerve", "Other"]},
                 {"name": "weight", "type": "number", "label": "Robot Weight (lbs)"},
-                {"name": "notes", "type": "text", "label": "Additional Notes"}
+                {"name": "notes",  "type": "text",   "label": "Additional Notes"},
             ]
-        }
+        },
     }
 
     if module_id not in module_definitions:
@@ -214,22 +193,22 @@ def get_module_definition(module_id):
 
 @api.route('/reports/match', methods=['POST'])
 @requires_auth
-@requires_permission("submit_match_report")
 def submit_match_report():
-    """
-    POST /api/reports/match
-    Submit a match scouting report. Requires submit_match_report permission.
-    The submitter's user_id is recorded server-side.
-    """
     if not request.json:
         abort(400, "No JSON data provided")
 
-    user_id = get_user_id()
+    required_fields = ['event_code', 'match_number', 'team_number']
+    for field in required_fields:
+        if field not in request.json:
+            abort(400, f"Missing required field: {field}")
+
+    # Tag with the submitter's UUID from X-User-Id header
+    submitted_by = (request.headers.get("X-User-Id") or "").strip() or "unknown"
 
     report = {
         **request.json,
-        "submitted_by": user_id,
-        "submitted_at": datetime.now().isoformat(),
+        "submitted_by": submitted_by,
+        "timestamp": datetime.now().isoformat(),
         "report_id": len(cache["reports_match"]) + 1,
     }
 
@@ -243,21 +222,21 @@ def submit_match_report():
 
 @api.route('/reports/pit', methods=['POST'])
 @requires_auth
-@requires_permission("submit_pit_report")
 def submit_pit_report():
-    """
-    POST /api/reports/pit
-    Submit a pit scouting report. Requires submit_pit_report permission.
-    """
     if not request.json:
         abort(400, "No JSON data provided")
 
-    user_id = get_user_id()
+    required_fields = ['event_code', 'team_number']
+    for field in required_fields:
+        if field not in request.json:
+            abort(400, f"Missing required field: {field}")
+
+    submitted_by = (request.headers.get("X-User-Id") or "").strip() or "unknown"
 
     report = {
         **request.json,
-        "submitted_by": user_id,
-        "submitted_at": datetime.now().isoformat(),
+        "submitted_by": submitted_by,
+        "timestamp": datetime.now().isoformat(),
         "report_id": len(cache["reports_pit"]) + 1,
     }
 
@@ -272,24 +251,11 @@ def submit_pit_report():
 @api.route('/reports/match', methods=['GET'])
 @requires_auth
 def get_match_reports():
-    """
-    GET /api/reports/match
-    Retrieve match reports. Filters: event_code, team_number, match_number.
-    Without view_all_reports, only returns the caller's own reports.
-    """
-    user_id = get_user_id()
     event_code = request.args.get('event_code')
     team_number = request.args.get('team_number')
     match_number = request.args.get('match_number')
 
-    from routes.permissions_roster import resolve_permissions
-    _, perms = resolve_permissions(user_id) if user_id else ("viewer", [])
-
     reports = cache["reports_match"]
-
-    # Scope to own reports unless user has view_all_reports
-    if "view_all_reports" not in perms and user_id:
-        reports = [r for r in reports if r.get("submitted_by") == user_id]
 
     if event_code:
         reports = [r for r in reports if r.get('event_code') == event_code]
@@ -303,22 +269,10 @@ def get_match_reports():
 @api.route('/reports/pit', methods=['GET'])
 @requires_auth
 def get_pit_reports():
-    """
-    GET /api/reports/pit
-    Retrieve pit reports. Filters: event_code, team_number.
-    Without view_all_reports, only returns the caller's own reports.
-    """
-    user_id = get_user_id()
     event_code = request.args.get('event_code')
     team_number = request.args.get('team_number')
 
-    from routes.permissions_roster import resolve_permissions
-    _, perms = resolve_permissions(user_id) if user_id else ("viewer", [])
-
     reports = cache["reports_pit"]
-
-    if "view_all_reports" not in perms and user_id:
-        reports = [r for r in reports if r.get("submitted_by") == user_id]
 
     if event_code:
         reports = [r for r in reports if r.get('event_code') == event_code]
@@ -327,55 +281,10 @@ def get_pit_reports():
 
     return jsonify({"count": len(reports), "reports": reports})
 
-@api.route('/reports/match/<int:report_id>', methods=['DELETE'])
-@requires_auth
-def delete_match_report(report_id):
-    """DELETE /api/reports/match/{id} — delete a match report."""
-    user_id = get_user_id()
-    from routes.permissions_roster import resolve_permissions
-    _, perms = resolve_permissions(user_id) if user_id else ("viewer", [])
-
-    idx = next((i for i, r in enumerate(cache["reports_match"]) if r.get("report_id") == report_id), None)
-    if idx is None:
-        return jsonify({"detail": "Report not found"}), 404
-
-    report = cache["reports_match"][idx]
-    is_own = report.get("submitted_by") == user_id
-    if not is_own and "delete_any_report" not in perms:
-        return jsonify({"detail": "Permission denied"}), 403
-    if is_own and "delete_own_reports" not in perms:
-        return jsonify({"detail": "Permission denied"}), 403
-
-    cache["reports_match"].pop(idx)
-    return jsonify({"success": True, "message": "Report deleted"})
-
-@api.route('/reports/pit/<int:report_id>', methods=['DELETE'])
-@requires_auth
-def delete_pit_report(report_id):
-    """DELETE /api/reports/pit/{id} — delete a pit report."""
-    user_id = get_user_id()
-    from routes.permissions_roster import resolve_permissions
-    _, perms = resolve_permissions(user_id) if user_id else ("viewer", [])
-
-    idx = next((i for i, r in enumerate(cache["reports_pit"]) if r.get("report_id") == report_id), None)
-    if idx is None:
-        return jsonify({"detail": "Report not found"}), 404
-
-    report = cache["reports_pit"][idx]
-    is_own = report.get("submitted_by") == user_id
-    if not is_own and "delete_any_report" not in perms:
-        return jsonify({"detail": "Permission denied"}), 403
-    if is_own and "delete_own_reports" not in perms:
-        return jsonify({"detail": "Permission denied"}), 403
-
-    cache["reports_pit"].pop(idx)
-    return jsonify({"success": True, "message": "Report deleted"})
-
 # ==================== Health Check ====================
 
 @api.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
     return jsonify({
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
