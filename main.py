@@ -3,6 +3,7 @@ from flask_cors import CORS
 from routes.frontend import frontend
 from routes.files import files
 from routes.api import api
+from routes.permissions_roster import permissions_roster
 import os
 
 app = Flask(__name__)
@@ -11,13 +12,14 @@ CORS(
     app,
     origins=["http://localhost", "https://robotics.deltavdevs.com"],
     supports_credentials=True,
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Session-Token"],
 )
 
 
 app.register_blueprint(frontend, url_prefix="/")
 app.register_blueprint(files, url_prefix="/api/files")
 app.register_blueprint(api, url_prefix="/api")
+app.register_blueprint(permissions_roster, url_prefix="/api")
 
 
 if __name__ == "__main__":
