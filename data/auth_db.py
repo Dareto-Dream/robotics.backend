@@ -108,3 +108,11 @@ def init_auth_db():
         cur.execute("SELECT pg_advisory_unlock(111222333);")
         cur.close()
         release_auth_conn(conn)
+
+# --- compatibility interface for shared startup system ---
+
+def get_conn():
+    return get_auth_conn()
+
+def release_conn(conn):
+    return release_auth_conn(conn)
