@@ -1,13 +1,12 @@
 from flask import Blueprint, request, jsonify, abort
-from functools import wraps
 from datetime import datetime
-import secrets
 import requests
 import os
 import base64
 
-from helpers import USERNAME, PASSWORD
+from auth.dependencies import require_auth
 from data.db import get_conn, release_conn
+from data.users_repo import ensure_user
 
 api = Blueprint('api', __name__)
 
@@ -26,29 +25,6 @@ cache = {
     "modules": {},
 }
 
-# ==================== AUTH ====================
-
-def check_auth(username, password):
-    user_ok = secrets.compare_digest(username, USERNAME)
-    pass_ok = secrets.compare_digest(password, PASSWORD)
-    return user_ok and pass_ok
-
-def requires_auth(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        auth = request.authorization
-        if not auth or not check_auth(auth.username, auth.password):
-            return jsonify({"detail": "Invalid credentials"}), 401, {
-                "WWW-Authenticate": 'Basic realm="Login Required"'
-            }
-
-        uid = request.headers.get("X-User-Id")
-        if not uid:
-            return jsonify({"detail": "Missing X-User-Id"}), 401
-
-        return f(*args, **kwargs)
-    return decorated
-
 # ==================== FRC API ====================
 
 def get_frc_api_headers():
@@ -59,11 +35,13 @@ def get_frc_api_headers():
         "Accept": "application/json"
     }
 
+
 def is_cache_valid(entry, ttl):
     if entry["data"] is None or entry["timestamp"] is None:
         return False
     age = (datetime.now() - entry["timestamp"]).total_seconds()
     return age < ttl
+
 
 def fetch_from_frc_api(endpoint):
     try:
@@ -75,11 +53,14 @@ def fetch_from_frc_api(endpoint):
         print("FRC API error:", e)
         return None
 
+
 # ==================== EVENTS ====================
 
 @api.route('/events', methods=['GET'])
-@requires_auth
-def get_events():
+@require_auth
+def get_events(current_user):
+    ensure_user(current_user["id"])
+    
     if is_cache_valid(cache["events"], cache["events"]["ttl"]):
         return jsonify(cache["events"]["data"])
 
@@ -93,9 +74,12 @@ def get_events():
     cache["events"]["timestamp"] = datetime.now()
     return jsonify(data)
 
+
 @api.route('/events/<event_code>/teams', methods=['GET'])
-@requires_auth
-def get_event_teams(event_code):
+@require_auth
+def get_event_teams(current_user, event_code):
+    ensure_user(current_user["id"])
+    
     ttl = 12 * 3600
 
     if event_code in cache["teams"] and is_cache_valid(cache["teams"][event_code], ttl):
@@ -110,9 +94,12 @@ def get_event_teams(event_code):
     cache["teams"][event_code] = {"data": data, "timestamp": datetime.now()}
     return jsonify(data)
 
+
 @api.route('/events/<event_code>/matches', methods=['GET'])
-@requires_auth
-def get_event_matches(event_code):
+@require_auth
+def get_event_matches(current_user, event_code):
+    ensure_user(current_user["id"])
+    
     ttl = 30 * 60
 
     if event_code in cache["matches"] and is_cache_valid(cache["matches"][event_code], ttl):
@@ -127,11 +114,14 @@ def get_event_matches(event_code):
     cache["matches"][event_code] = {"data": data, "timestamp": datetime.now()}
     return jsonify(data)
 
+
 # ==================== MODULES ====================
 
 @api.route('/modules/manifest', methods=['GET'])
-@requires_auth
-def get_modules_manifest():
+@require_auth
+def get_modules_manifest(current_user):
+    ensure_user(current_user["id"])
+    
     if is_cache_valid(cache["modules_manifest"], cache["modules_manifest"]["ttl"]):
         return jsonify(cache["modules_manifest"]["data"])
 
@@ -148,13 +138,16 @@ def get_modules_manifest():
     cache["modules_manifest"]["timestamp"] = datetime.now()
     return jsonify(manifest)
 
+
 # ==================== MATCH REPORTS ====================
 
 @api.route('/reports/match', methods=['POST'])
-@requires_auth
-def submit_match_report():
+@require_auth
+def submit_match_report(current_user):
+    uid = current_user["id"]
+    ensure_user(uid)
+    
     data = request.json
-    uid = request.headers.get("X-User-Id")
 
     required = ["event_code", "team_number", "match_number"]
     for r in required:
@@ -190,8 +183,10 @@ def submit_match_report():
 
 
 @api.route('/reports/match', methods=['GET'])
-@requires_auth
-def get_match_reports():
+@require_auth
+def get_match_reports(current_user):
+    ensure_user(current_user["id"])
+    
     event_code = request.args.get('event_code')
     team_number = request.args.get('team_number')
     match_number = request.args.get('match_number')
@@ -237,13 +232,16 @@ def get_match_reports():
 
     return jsonify({"count": len(reports), "reports": reports})
 
+
 # ==================== PIT REPORTS ====================
 
 @api.route('/reports/pit', methods=['POST'])
-@requires_auth
-def submit_pit_report():
+@require_auth
+def submit_pit_report(current_user):
+    uid = current_user["id"]
+    ensure_user(uid)
+    
     data = request.json
-    uid = request.headers.get("X-User-Id")
 
     if "event_code" not in data or "team_number" not in data:
         abort(400, "Missing required fields")
@@ -276,8 +274,10 @@ def submit_pit_report():
 
 
 @api.route('/reports/pit', methods=['GET'])
-@requires_auth
-def get_pit_reports():
+@require_auth
+def get_pit_reports(current_user):
+    ensure_user(current_user["id"])
+    
     event_code = request.args.get('event_code')
     team_number = request.args.get('team_number')
 
@@ -316,6 +316,7 @@ def get_pit_reports():
     } for r in rows]
 
     return jsonify({"count": len(reports), "reports": reports})
+
 
 # ==================== HEALTH ====================
 

@@ -1,38 +1,27 @@
 from flask import Blueprint, request, jsonify, abort
-from werkzeug.security import check_password_hash
-from functools import wraps
-import secrets
 import shutil
-from helpers import safe_path, USERNAME, PASSWORD
+from helpers import safe_path
+from auth.dependencies import require_auth
+from data.users_repo import ensure_user
 
 files = Blueprint('files', __name__)
 
-def check_auth(username, password):
-    user_ok = secrets.compare_digest(username, USERNAME)
-    pass_ok = secrets.compare_digest(password, PASSWORD)
-    return user_ok and pass_ok
-
-def requires_auth(f):
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        auth = request.authorization
-        if not auth or not check_auth(auth.username, auth.password):
-            return jsonify({"detail": "Invalid credentials"}), 401, {
-                'WWW-Authenticate': 'Basic realm="Login Required"'
-            }
-        return f(*args, **kwargs)
-    return decorated
 
 @files.route('/mkdir/<path:path>', methods=['POST'])
-@requires_auth
-def make_dir(path):
+@require_auth
+def make_dir(current_user, path):
+    ensure_user(current_user["id"])
+    
     target = safe_path(path)
     target.mkdir(parents=True, exist_ok=True)
     return jsonify({"created": path})
 
+
 @files.route('/upload/<path:path>', methods=['POST'])
-@requires_auth
-def upload_file(path):
+@require_auth
+def upload_file(current_user, path):
+    ensure_user(current_user["id"])
+    
     if 'file' not in request.files:
         abort(400, "No file provided")
     
@@ -41,11 +30,14 @@ def upload_file(path):
     target.parent.mkdir(parents=True, exist_ok=True)
     
     file.save(target)
-    return jsonify({"updated": path})
+    return jsonify({"uploaded": path})
+
 
 @files.route('/delete/<path:path>', methods=['DELETE'])
-@requires_auth
-def delete_path(path):
+@require_auth
+def delete_path(current_user, path):
+    ensure_user(current_user["id"])
+    
     target = safe_path(path)
     
     if not target.exists():

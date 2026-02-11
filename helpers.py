@@ -5,15 +5,12 @@ import os
 BASE_DIR = Path(__file__).parent
 FILES_DIR = BASE_DIR / "files"
 STATIC_DIR = BASE_DIR / "static"
-TEMPLATE = BASE_DIR  / "index.html"
-
-# Authentication credentials (in production, use environment variables)
-USERNAME = os.environ.get("API_USERNAME", "admin")
-PASSWORD = os.environ.get("API_PASSWORD", "changeme")
+TEMPLATE = BASE_DIR / "index.html"
 
 # Ensure directories exist
 FILES_DIR.mkdir(exist_ok=True)
 STATIC_DIR.mkdir(exist_ok=True)
+
 
 def safe_path(path_str):
     """
@@ -27,6 +24,7 @@ def safe_path(path_str):
         raise ValueError("Invalid path: directory traversal attempt")
     
     return resolved
+
 
 def walk(directory):
     """
