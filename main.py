@@ -12,9 +12,14 @@ from data.auth_db import init_auth_db
 
 app = Flask(__name__)
 
-# Initialize schemas at boot
-init_db()
-init_auth_db()
+@app.before_serving
+def startup():
+    from data.db import init_db
+    from data.auth_db import init_auth_db
+
+    print("Initializing databases...")
+    init_db()
+    init_auth_db()
 
 CORS(
     app,

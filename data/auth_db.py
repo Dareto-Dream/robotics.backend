@@ -48,7 +48,7 @@ _auth_pool = None
 def _create_auth_pool():
     return SimpleConnectionPool(
         minconn=1,
-        maxconn=10,
+        maxconn=3,
         dsn=AUTH_DATABASE_URL,
     )
 
