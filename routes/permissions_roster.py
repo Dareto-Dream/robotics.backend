@@ -25,11 +25,12 @@ import secrets
 from helpers import USERNAME, PASSWORD
 
 from data.users_repo import ensure_user
+from data.db import get_conn, release_conn
 
 
 permissions_roster = Blueprint('permissions_roster', __name__)
 
-# ━━━━━━━━━━━━━━━ ROLE & PERMISSION DEFINITIONS ━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━ ROLE & PERMISSION DEFINITIONS ━━━━━━━━━━━━━━━━━━
 
 ROLES = {
     "viewer":     {"level": 0, "name": "Viewer",      "description": "Read-only access"},
@@ -100,37 +101,7 @@ GUEST_PERMISSIONS = [
 ]
 
 
-# ━━━━━━━━━━━━━━━━ IN-MEMORY STORAGE ━━━━━━━━━━━━━━━━━━━━━━━━━━
-#
-# teams[team_code] = {
-#     "team_code": str,           # 6-char join code (also the dict key)
-#     "name": str,                # display name chosen by creator
-#     "team_number": str,         # FRC team number
-#     "description": str,
-#     "created_by": str,          # UUID of the creator
-#     "created_at": str,          # ISO timestamp
-#     "members": {
-#         <user_uuid>: {
-#             "user_id": str,     # same UUID
-#             "username": str,
-#             "display_name": str,
-#             "bio": str,
-#             "profile_pic_url": str,
-#             "role": str,        # one of ROLES keys
-#             "subteam": str,
-#             "joined_at": str,
-#             "is_active": bool,  # False = left / removed
-#         }
-#     }
-# }
-teams = {}
-
-# Reverse lookup:  user_uuid  ->  team_code
-# Only contains *active* members.
-user_team_map = {}
-
-
-# ━━━━━━━━━━━━━━━━━━━ AUTH HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ━━━━━━━━━━━━━━━━━━ AUTH HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _check_auth(user, pw):
     return (secrets.compare_digest(user, USERNAME)
@@ -154,23 +125,148 @@ def _get_user_id():
     return (request.headers.get("X-User-Id") or "").strip() or None
 
 
-def _get_user_team(user_id):
-    """Return (team_code, team_dict, member_dict) or (None, None, None)."""
-    code = user_team_map.get(user_id)
-    if code and code in teams:
-        team = teams[code]
-        member = team["members"].get(user_id)
-        if member and member.get("is_active", False):
-            return code, team, member
-    return None, None, None
+# ━━━━━━━━━━━━━━━━━━ DATABASE HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+_JOIN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O/1/I
+
+
+def _generate_join_code():
+    """Create a unique 6-char code not already in the teams table."""
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        for _ in range(100):
+            code = "".join(secrets.choice(_JOIN_ALPHABET) for _ in range(6))
+            cur.execute("SELECT 1 FROM teams WHERE team_code=%s", (code,))
+            if cur.fetchone() is None:
+                return code
+    finally:
+        cur.close()
+        release_conn(conn)
+    raise RuntimeError("Could not generate unique join code")
+
+
+def _db_get_user_membership(user_id):
+    """
+    Return a dict with team + member info for an active member, or None.
+    Shape mirrors the old in-memory structure used by the rest of the module.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT t.team_code, t.name, t.team_number, t.description,
+                   t.created_by, t.created_at,
+                   m.role, m.display_name, m.bio, m.profile_pic_url, m.subteam, m.joined_at
+            FROM memberships m
+            JOIN teams t ON t.team_code = m.team_code
+            WHERE m.user_id = %s AND m.is_active = TRUE
+        """, (user_id,))
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        release_conn(conn)
+
+    if row is None:
+        return None
+
+    (team_code, name, team_number, description,
+     created_by, created_at,
+     role, display_name, bio, profile_pic_url, subteam, joined_at) = row
+
+    return {
+        "team": {
+            "team_code":   team_code,
+            "name":        name,
+            "team_number": team_number or "",
+            "description": description or "",
+            "created_by":  str(created_by) if created_by else "",
+            "created_at":  created_at.isoformat() if created_at else "",
+        },
+        "member": {
+            "user_id":         user_id,
+            "username":        "",          # fetched from users table if needed
+            "display_name":    display_name or "",
+            "bio":             bio or "",
+            "profile_pic_url": profile_pic_url or "",
+            "role":            role,
+            "subteam":         subteam or "",
+            "joined_at":       joined_at.isoformat() if joined_at else "",
+            "is_active":       True,
+        },
+    }
+
+
+def _db_get_team_roster(team_code):
+    """Return a list of member dicts for all active members of a team."""
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            SELECT m.user_id, u.username,
+                   m.role, m.display_name, m.bio, m.profile_pic_url, m.subteam, m.joined_at
+            FROM memberships m
+            JOIN users u ON u.user_id = m.user_id
+            WHERE m.team_code = %s AND m.is_active = TRUE
+        """, (team_code,))
+        rows = cur.fetchall()
+    finally:
+        cur.close()
+        release_conn(conn)
+
+    members = []
+    for (uid, username, role, display_name, bio, profile_pic_url, subteam, joined_at) in rows:
+        members.append({
+            "user_id":         str(uid),
+            "username":        username or "",
+            "display_name":    display_name or "",
+            "bio":             bio or "",
+            "profile_pic_url": profile_pic_url or "",
+            "role":            role,
+            "subteam":         subteam or "",
+            "joined_at":       joined_at.isoformat() if joined_at else "",
+            "is_active":       True,
+        })
+    return members
+
+
+def _db_active_member_count(team_code):
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT COUNT(*) FROM memberships WHERE team_code=%s AND is_active=TRUE",
+            (team_code,)
+        )
+        return cur.fetchone()[0]
+    finally:
+        cur.close()
+        release_conn(conn)
+
+
+def _db_cleanup_empty_teams():
+    """Delete teams that have zero active members."""
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            DELETE FROM teams
+            WHERE team_code NOT IN (
+                SELECT DISTINCT team_code FROM memberships WHERE is_active = TRUE
+            )
+        """)
+        conn.commit()
+    finally:
+        cur.close()
+        release_conn(conn)
 
 
 def _resolve_permissions(user_id):
-    """Compute (role_str, permissions_list) from membership."""
-    _, _, member = _get_user_team(user_id)
-    if member is None:
+    """Compute (role_str, permissions_list) from DB membership."""
+    info = _db_get_user_membership(user_id)
+    if info is None:
         return "viewer", list(GUEST_PERMISSIONS)
-    role = member.get("role", "viewer")
+    role = info["member"]["role"]
     return role, list(ROLE_PERMISSIONS.get(role, GUEST_PERMISSIONS))
 
 
@@ -192,34 +288,7 @@ def requires_permission(perm_key):
     return decorator
 
 
-# ━━━━━━━━━━━━━━━━━━ TEAM HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-_JOIN_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no 0/O/1/I
-
-
-def _generate_join_code():
-    """Create a unique 6-char code that is not already in use."""
-    for _ in range(100):
-        code = "".join(secrets.choice(_JOIN_ALPHABET) for _ in range(6))
-        if code not in teams:
-            return code
-    raise RuntimeError("Could not generate unique join code")
-
-
-def _active_member_count(team):
-    return sum(1 for m in team["members"].values() if m.get("is_active"))
-
-
-def _cleanup_empty_teams():
-    """Delete every team that has zero active members."""
-    empty = [code for code, t in teams.items() if _active_member_count(t) == 0]
-    for code in empty:
-        del teams[code]
-    # Scrub stale entries from user_team_map
-    stale = [uid for uid, c in user_team_map.items() if c not in teams]
-    for uid in stale:
-        del user_team_map[uid]
-
+# ━━━━━━━━━━━━━━━━━ JSON SHAPE HELPERS ━━━━━━━━━━━━━━━━━━━━━━━━━
 
 def _member_json(m):
     """Internal member dict -> JSON shape the Flutter client expects."""
@@ -238,10 +307,10 @@ def _member_json(m):
 
 def _team_json(t):
     return {
-        "team_code":    t["team_code"],
-        "name":         t["name"],
-        "team_number":  t["team_number"],
-        "description":  t.get("description", ""),
+        "team_code":   t["team_code"],
+        "name":        t["name"],
+        "team_number": t["team_number"],
+        "description": t.get("description", ""),
     }
 
 
@@ -263,22 +332,15 @@ def auth_sync():
     200  { user_id, role, permissions[], team|null, roster[]|null }
     """
     uid = _get_user_id()
-    username = (request.json or {}).get("username")
+    body = request.json or {}
+    username = body.get("username", "")
     ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
 
-    body = request.json or {}
-    username = body.get("username", "")
+    _db_cleanup_empty_teams()
 
-    # Housekeeping: remove any abandoned teams
-    _cleanup_empty_teams()
-
-    # If user is on a team, keep their username fresh
-    _, team, member = _get_user_team(uid)
-    if member and username:
-        member["username"] = username
-
+    info = _db_get_user_membership(uid)
     role, permissions = _resolve_permissions(uid)
 
     resp = {
@@ -289,12 +351,10 @@ def auth_sync():
         "roster":      None,
     }
 
-    if team is not None:
+    if info is not None:
+        team = info["team"]
         resp["team"] = _team_json(team)
-        resp["roster"] = [
-            _member_json(m) for m in team["members"].values()
-            if m.get("is_active")
-        ]
+        resp["roster"] = [_member_json(m) for m in _db_get_team_roster(team["team_code"])]
 
     return jsonify(resp)
 
@@ -313,56 +373,49 @@ def create_team():
     201   { success, team{}, role, permissions[] }
     """
     uid = _get_user_id()
-    username = (request.json or {}).get("username")
+    body = request.json or {}
+    username = body.get("username", "")
     ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
 
     # Must not already be on a team
-    _, existing_team, existing_member = _get_user_team(uid)
-    if existing_team is not None:
+    if _db_get_user_membership(uid) is not None:
         return jsonify({"detail": "Already on a team. Leave first."}), 409
 
-    body = request.json or {}
     name = body.get("name", "").strip()
     team_number = body.get("team_number", "").strip()
-    username = body.get("username", "").strip()
-    display_name = body.get("display_name", "").strip() or username
+    display_name = body.get("display_name", "").strip() or username.strip()
 
     if not name:
         return jsonify({"detail": "Team name is required"}), 400
 
     code = _generate_join_code()
-    now = datetime.now().isoformat()
 
-    teams[code] = {
-        "team_code":   code,
-        "name":        name,
-        "team_number": team_number,
-        "description": "",
-        "created_by":  uid,
-        "created_at":  now,
-        "members": {
-            uid: {
-                "user_id":         uid,
-                "username":        username,
-                "display_name":    display_name,
-                "bio":             "",
-                "profile_pic_url": "",
-                "role":            "owner",
-                "subteam":         "",
-                "joined_at":       now,
-                "is_active":       True,
-            }
-        },
-    }
-    user_team_map[uid] = code
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("""
+            INSERT INTO teams (team_code, name, team_number, created_by)
+            VALUES (%s, %s, %s, %s)
+        """, (code, name, team_number, uid))
 
+        cur.execute("""
+            INSERT INTO memberships (user_id, team_code, role, display_name)
+            VALUES (%s, %s, 'owner', %s)
+        """, (uid, code, display_name))
+
+        conn.commit()
+    finally:
+        cur.close()
+        release_conn(conn)
+
+    info = _db_get_user_membership(uid)
     role, permissions = _resolve_permissions(uid)
 
     return jsonify({
         "success":     True,
-        "team":        _team_json(teams[code]),
+        "team":        _team_json(info["team"]),
         "role":        role,
         "permissions": permissions,
     }), 201
@@ -382,58 +435,52 @@ def join_team():
     200   { success, team{}, role, permissions[] }
     """
     uid = _get_user_id()
-    username = (request.json or {}).get("username")
+    body = request.json or {}
+    username = body.get("username", "")
     ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
 
     # Must not already be on a team
-    _, existing_team, _ = _get_user_team(uid)
-    if existing_team is not None:
+    if _db_get_user_membership(uid) is not None:
         return jsonify({"detail": "Already on a team. Leave first."}), 409
 
-    body = request.json or {}
     code = body.get("team_code", "").strip().upper()
-    username = body.get("username", "").strip()
-    display_name = body.get("display_name", "").strip() or username
+    display_name = body.get("display_name", "").strip() or username.strip()
 
     if not code:
         return jsonify({"detail": "Team code is required"}), 400
-    if code not in teams:
-        return jsonify({"detail": "Invalid team code"}), 404
 
-    team = teams[code]
-    now = datetime.now().isoformat()
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        # Verify team exists
+        cur.execute("SELECT team_code FROM teams WHERE team_code=%s", (code,))
+        if cur.fetchone() is None:
+            return jsonify({"detail": "Invalid team code"}), 404
 
-    # Returning member?  Reactivate with their previous role.
-    if uid in team["members"]:
-        prev = team["members"][uid]
-        prev["is_active"] = True
-        if username:
-            prev["username"] = username
-        if display_name:
-            prev["display_name"] = display_name
-    else:
-        # Brand-new member -> scout
-        team["members"][uid] = {
-            "user_id":         uid,
-            "username":        username,
-            "display_name":    display_name,
-            "bio":             "",
-            "profile_pic_url": "",
-            "role":            "scout",
-            "subteam":         "",
-            "joined_at":       now,
-            "is_active":       True,
-        }
+        # Upsert membership: reactivate if previously left, otherwise insert as scout
+        cur.execute("""
+            INSERT INTO memberships (user_id, team_code, role, display_name, is_active)
+            VALUES (%s, %s, 'scout', %s, TRUE)
+            ON CONFLICT (user_id)
+            DO UPDATE SET
+                team_code    = EXCLUDED.team_code,
+                is_active    = TRUE,
+                display_name = COALESCE(EXCLUDED.display_name, memberships.display_name)
+        """, (uid, code, display_name))
 
-    user_team_map[uid] = code
+        conn.commit()
+    finally:
+        cur.close()
+        release_conn(conn)
 
+    info = _db_get_user_membership(uid)
     role, permissions = _resolve_permissions(uid)
 
     return jsonify({
         "success":     True,
-        "team":        _team_json(team),
+        "team":        _team_json(info["team"]),
         "role":        role,
         "permissions": permissions,
     })
@@ -456,18 +503,25 @@ def leave_team():
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
 
-    _, team, member = _get_user_team(uid)
-    if team is None or member is None:
+    info = _db_get_user_membership(uid)
+    if info is None:
         return jsonify({"detail": "Not on a team"}), 404
 
-    team_name = team["name"]
+    team_name = info["team"]["name"]
 
-    # Deactivate
-    member["is_active"] = False
-    user_team_map.pop(uid, None)
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE memberships SET is_active=FALSE WHERE user_id=%s",
+            (uid,)
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        release_conn(conn)
 
-    # Auto-delete if nobody active is left
-    _cleanup_empty_teams()
+    _db_cleanup_empty_teams()
 
     return jsonify({
         "success":     True,
@@ -486,13 +540,16 @@ def team_info():
     ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-    _, team, _ = _get_user_team(uid)
-    if team is None:
+
+    info = _db_get_user_membership(uid)
+    if info is None:
         return jsonify({"detail": "Not on a team"}), 404
+
+    team = info["team"]
     return jsonify({
         **_team_json(team),
         "created_at":   team["created_at"],
-        "member_count": _active_member_count(team),
+        "member_count": _db_active_member_count(team["team_code"]),
     })
 
 
@@ -506,14 +563,30 @@ def update_team():
     ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-    _, team, _ = _get_user_team(uid)
-    if team is None:
+
+    info = _db_get_user_membership(uid)
+    if info is None:
         return jsonify({"detail": "Not on a team"}), 404
+
     body = request.json or {}
-    for key in ("name", "team_number", "description"):
-        if key in body:
-            team[key] = body[key]
-    return jsonify({"success": True, "team": _team_json(team)})
+    team_code = info["team"]["team_code"]
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        if "name" in body:
+            cur.execute("UPDATE teams SET name=%s WHERE team_code=%s", (body["name"], team_code))
+        if "team_number" in body:
+            cur.execute("UPDATE teams SET team_number=%s WHERE team_code=%s", (body["team_number"], team_code))
+        if "description" in body:
+            cur.execute("UPDATE teams SET description=%s WHERE team_code=%s", (body["description"], team_code))
+        conn.commit()
+    finally:
+        cur.close()
+        release_conn(conn)
+
+    updated = _db_get_user_membership(uid)
+    return jsonify({"success": True, "team": _team_json(updated["team"])})
 
 
 # ━━━━━━━━━━━━━━━━━━ ROSTER ENDPOINTS ━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -528,18 +601,17 @@ def get_roster():
     ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-    _, team, _ = _get_user_team(uid)
-    if team is None:
+
+    info = _db_get_user_membership(uid)
+    if info is None:
         return jsonify({"detail": "Not on a team"}), 404
-    members = [
-        _member_json(m) for m in team["members"].values()
-        if m.get("is_active")
-    ]
+
+    members = _db_get_team_roster(info["team"]["team_code"])
     members.sort(key=lambda x: (
         -ROLES.get(x["role"], {}).get("level", 0),
-        x.get("displayName", ""),
+        x.get("display_name", ""),
     ))
-    return jsonify({"count": len(members), "members": members})
+    return jsonify({"count": len(members), "members": [_member_json(m) for m in members]})
 
 
 @permissions_roster.route('/roster/me', methods=['GET'])
@@ -551,10 +623,12 @@ def get_own_profile():
     ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-    _, _, member = _get_user_team(uid)
-    if member is None:
+
+    info = _db_get_user_membership(uid)
+    if info is None:
         return jsonify({"detail": "Not on a team"}), 404
-    return jsonify(_member_json(member))
+
+    return jsonify(_member_json(info["member"]))
 
 
 @permissions_roster.route('/roster/me', methods=['PUT'])
@@ -566,12 +640,16 @@ def update_own_profile():
     ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-    _, _, member = _get_user_team(uid)
-    if member is None:
+
+    info = _db_get_user_membership(uid)
+    if info is None:
         return jsonify({"detail": "Not on a team"}), 404
+
     body = request.json or {}
-    _apply_profile_fields(member, body)
-    return jsonify({"success": True, "member": _member_json(member)})
+    _db_apply_profile_fields(uid, body)
+
+    updated = _db_get_user_membership(uid)
+    return jsonify({"success": True, "member": _member_json(updated["member"])})
 
 
 @permissions_roster.route('/roster/register', methods=['POST'])
@@ -583,24 +661,47 @@ def register_profile():
     ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-    _, _, member = _get_user_team(uid)
-    if member is None:
+
+    info = _db_get_user_membership(uid)
+    if info is None:
         # Not on a team: accept silently so the push queue drains
         return jsonify({"success": True, "member": None}), 200
+
     body = request.json or {}
-    _apply_profile_fields(member, body)
-    return jsonify({"success": True, "member": _member_json(member)}), 201
+    _db_apply_profile_fields(uid, body)
+
+    updated = _db_get_user_membership(uid)
+    return jsonify({"success": True, "member": _member_json(updated["member"])}), 201
 
 
-def _apply_profile_fields(member, body):
+def _db_apply_profile_fields(user_id, body):
+    """Write profile fields from request body into the memberships table."""
     mapping = {
         "display_name": "display_name", "displayName": "display_name",
         "bio": "bio", "subteam": "subteam",
         "profile_pic_url": "profile_pic_url", "profilePicUrl": "profile_pic_url",
     }
-    for req_key, int_key in mapping.items():
+    updates = {}
+    for req_key, col in mapping.items():
         if req_key in body:
-            member[int_key] = body[req_key]
+            updates[col] = body[req_key]
+
+    if not updates:
+        return
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        set_clause = ", ".join(f"{col}=%s" for col in updates)
+        values = list(updates.values()) + [user_id]
+        cur.execute(
+            f"UPDATE memberships SET {set_clause} WHERE user_id=%s",
+            values
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        release_conn(conn)
 
 
 @permissions_roster.route('/roster/<target_id>/role', methods=['PUT'])
@@ -613,24 +714,53 @@ def update_member_role(target_id):
     ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-    _, team, caller = _get_user_team(uid)
-    if team is None:
+
+    caller_info = _db_get_user_membership(uid)
+    if caller_info is None:
         return jsonify({"detail": "Not on a team"}), 404
-    if target_id not in team["members"]:
+
+    team_code = caller_info["team"]["team_code"]
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT role FROM memberships WHERE user_id=%s AND team_code=%s AND is_active=TRUE",
+            (target_id, team_code)
+        )
+        row = cur.fetchone()
+    finally:
+        cur.close()
+        release_conn(conn)
+
+    if row is None:
         return jsonify({"detail": "Member not found"}), 404
-    target = team["members"][target_id]
-    if not target.get("is_active"):
-        return jsonify({"detail": "Member is inactive"}), 404
+
+    current_target_role = row[0]
     body = request.json or {}
     new_role = body.get("role", "")
+
     if new_role not in ROLES:
         return jsonify({"detail": f"Invalid role. Valid: {list(ROLES.keys())}"}), 400
-    caller_level = ROLES.get(caller["role"], {}).get("level", 0)
+
+    caller_level = ROLES.get(caller_info["member"]["role"], {}).get("level", 0)
     if ROLES[new_role]["level"] > caller_level:
         return jsonify({"detail": "Cannot assign a role higher than your own"}), 403
-    if target["role"] == "owner" and caller["role"] != "owner":
+    if current_target_role == "owner" and caller_info["member"]["role"] != "owner":
         return jsonify({"detail": "Cannot demote the team owner"}), 403
-    target["role"] = new_role
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "UPDATE memberships SET role=%s WHERE user_id=%s AND team_code=%s",
+            (new_role, target_id, team_code)
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        release_conn(conn)
+
     return jsonify({
         "success":     True,
         "user_id":     target_id,
@@ -649,19 +779,39 @@ def remove_member(target_id):
     ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
-    _, team, _ = _get_user_team(uid)
-    if team is None:
+
+    info = _db_get_user_membership(uid)
+    if info is None:
         return jsonify({"detail": "Not on a team"}), 404
-    if target_id not in team["members"]:
-        return jsonify({"detail": "Member not found"}), 404
+
+    team_code = info["team"]["team_code"]
+
     if target_id == uid:
         return jsonify({"detail": "Use /teams/leave to remove yourself"}), 400
-    target = team["members"][target_id]
-    if target["role"] == "owner":
-        return jsonify({"detail": "Cannot remove the team owner"}), 403
-    target["is_active"] = False
-    user_team_map.pop(target_id, None)
-    _cleanup_empty_teams()
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute(
+            "SELECT role FROM memberships WHERE user_id=%s AND team_code=%s AND is_active=TRUE",
+            (target_id, team_code)
+        )
+        row = cur.fetchone()
+        if row is None:
+            return jsonify({"detail": "Member not found"}), 404
+        if row[0] == "owner":
+            return jsonify({"detail": "Cannot remove the team owner"}), 403
+
+        cur.execute(
+            "UPDATE memberships SET is_active=FALSE WHERE user_id=%s",
+            (target_id,)
+        )
+        conn.commit()
+    finally:
+        cur.close()
+        release_conn(conn)
+
+    _db_cleanup_empty_teams()
     return jsonify({"success": True, "message": "Member removed"})
 
 
@@ -696,17 +846,25 @@ def get_guest_permissions():
 @requires_permission("view_admin")
 def admin_stats():
     """GET /api/admin/stats"""
-    _cleanup_empty_teams()
-    total = 0
-    by_role = {}
-    for t in teams.values():
-        for m in t["members"].values():
-            if m.get("is_active"):
-                total += 1
-                r = m.get("role", "viewer")
-                by_role[r] = by_role.get(r, 0) + 1
+    _db_cleanup_empty_teams()
+
+    conn = get_conn()
+    cur = conn.cursor()
+    try:
+        cur.execute("SELECT COUNT(DISTINCT team_code) FROM memberships WHERE is_active=TRUE")
+        team_count = cur.fetchone()[0]
+
+        cur.execute("SELECT role, COUNT(*) FROM memberships WHERE is_active=TRUE GROUP BY role")
+        by_role = {row[0]: row[1] for row in cur.fetchall()}
+
+        cur.execute("SELECT COUNT(*) FROM memberships WHERE is_active=TRUE")
+        total = cur.fetchone()[0]
+    finally:
+        cur.close()
+        release_conn(conn)
+
     return jsonify({
-        "teams":         len(teams),
+        "teams":         team_count,
         "total_members": total,
         "by_role":       by_role,
         "timestamp":     datetime.now().isoformat(),
