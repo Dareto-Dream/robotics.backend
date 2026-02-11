@@ -20,7 +20,7 @@ pool = SimpleConnectionPool(
 
 def get_conn():
     conn = pool.getconn()
-    conn.autocommit = False
+    conn.autocommit = True
     return conn
 
 def release_conn(conn):
