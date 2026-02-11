@@ -1,4 +1,4 @@
-# src/auth/hashing.py
+# auth/hashing.py
 #
 # bcrypt password hashing.
 # bcrypt silently truncates input at 72 bytes — we enforce this explicitly

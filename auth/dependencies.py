@@ -1,4 +1,4 @@
-# src/auth/dependencies.py
+# auth/dependencies.py
 #
 # Flask decorator that protects routes with JWT auth.
 # Drop-in replacement for the existing requires_auth (Basic auth) decorator
@@ -17,7 +17,7 @@ from functools import wraps
 from flask import request, jsonify
 import jwt as pyjwt
 
-from src.auth.tokens import decode_token
+from auth.tokens import decode_token
 from data.auth_db import get_auth_conn, release_auth_conn
 
 

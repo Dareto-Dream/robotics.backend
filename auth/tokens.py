@@ -1,4 +1,4 @@
-# src/auth/tokens.py
+# auth/tokens.py
 #
 # JWT creation for access and refresh tokens.
 #
