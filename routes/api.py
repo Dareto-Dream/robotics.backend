@@ -1,28 +1,32 @@
 from flask import Blueprint, request, jsonify, abort
 from functools import wraps
-from datetime import datetime, timedelta
+from datetime import datetime
 import secrets
 import requests
-from helpers import USERNAME, PASSWORD
 import os
+import base64
+
+from helpers import USERNAME, PASSWORD
+from data.db import get_conn, release_conn
 
 api = Blueprint('api', __name__)
 
-# FRC API Configuration
+# ==================== FRC CONFIG ====================
+
 FRC_API_BASE = "https://frc-api.firstinspires.org/v3.0"
 FRC_API_USERNAME = os.environ.get("FRC_API_USERNAME", "changeme")
 FRC_API_TOKEN = os.environ.get("FRC_API_TOKEN", "changeme")
 
-# Cache storage (in production, use Redis or similar)
+# Only external API caching remains in memory
 cache = {
     "events": {"data": None, "timestamp": None, "ttl": 6 * 3600},
     "teams": {},
     "matches": {},
     "modules_manifest": {"data": None, "timestamp": None, "ttl": 24 * 3600},
     "modules": {},
-    "reports_match": [],
-    "reports_pit": [],
 }
+
+# ==================== AUTH ====================
 
 def check_auth(username, password):
     user_ok = secrets.compare_digest(username, USERNAME)
@@ -35,14 +39,19 @@ def requires_auth(f):
         auth = request.authorization
         if not auth or not check_auth(auth.username, auth.password):
             return jsonify({"detail": "Invalid credentials"}), 401, {
-                'WWW-Authenticate': 'Basic realm="Login Required"'
+                "WWW-Authenticate": 'Basic realm="Login Required"'
             }
+
+        uid = request.headers.get("X-User-Id")
+        if not uid:
+            return jsonify({"detail": "Missing X-User-Id"}), 401
+
         return f(*args, **kwargs)
     return decorated
 
+# ==================== FRC API ====================
+
 def get_frc_api_headers():
-    """Generate headers for FRC API requests"""
-    import base64
     auth_string = f"{FRC_API_USERNAME}:{FRC_API_TOKEN}"
     encoded = base64.b64encode(auth_string.encode()).decode()
     return {
@@ -50,10 +59,10 @@ def get_frc_api_headers():
         "Accept": "application/json"
     }
 
-def is_cache_valid(cache_entry, ttl):
-    if cache_entry.get("data") is None or cache_entry.get("timestamp") is None:
+def is_cache_valid(entry, ttl):
+    if entry["data"] is None or entry["timestamp"] is None:
         return False
-    age = (datetime.now() - cache_entry["timestamp"]).total_seconds()
+    age = (datetime.now() - entry["timestamp"]).total_seconds()
     return age < ttl
 
 def fetch_from_frc_api(endpoint):
@@ -63,10 +72,10 @@ def fetch_from_frc_api(endpoint):
         response.raise_for_status()
         return response.json()
     except requests.exceptions.RequestException as e:
-        print(f"FRC API error: {e}")
+        print("FRC API error:", e)
         return None
 
-# ==================== Event Endpoints ====================
+# ==================== EVENTS ====================
 
 @api.route('/events', methods=['GET'])
 @requires_auth
@@ -78,9 +87,7 @@ def get_events():
     data = fetch_from_frc_api(f"{season}/events")
 
     if data is None:
-        if cache["events"]["data"] is not None:
-            return jsonify({"cached": True, "data": cache["events"]["data"]})
-        abort(503, "FRC API unavailable and no cached data")
+        abort(503, "FRC API unavailable")
 
     cache["events"]["data"] = data
     cache["events"]["timestamp"] = datetime.now()
@@ -89,44 +96,38 @@ def get_events():
 @api.route('/events/<event_code>/teams', methods=['GET'])
 @requires_auth
 def get_event_teams(event_code):
-    cache_key = event_code
     ttl = 12 * 3600
 
-    if cache_key in cache["teams"] and is_cache_valid(cache["teams"][cache_key], ttl):
-        return jsonify(cache["teams"][cache_key]["data"])
+    if event_code in cache["teams"] and is_cache_valid(cache["teams"][event_code], ttl):
+        return jsonify(cache["teams"][event_code]["data"])
 
     season = request.args.get('season', datetime.now().year)
     data = fetch_from_frc_api(f"{season}/teams?eventCode={event_code}")
 
     if data is None:
-        if cache_key in cache["teams"] and cache["teams"][cache_key]["data"] is not None:
-            return jsonify({"cached": True, "data": cache["teams"][cache_key]["data"]})
-        abort(503, "FRC API unavailable and no cached data")
+        abort(503, "FRC API unavailable")
 
-    cache["teams"][cache_key] = {"data": data, "timestamp": datetime.now()}
+    cache["teams"][event_code] = {"data": data, "timestamp": datetime.now()}
     return jsonify(data)
 
 @api.route('/events/<event_code>/matches', methods=['GET'])
 @requires_auth
 def get_event_matches(event_code):
-    cache_key = event_code
     ttl = 30 * 60
 
-    if cache_key in cache["matches"] and is_cache_valid(cache["matches"][cache_key], ttl):
-        return jsonify(cache["matches"][cache_key]["data"])
+    if event_code in cache["matches"] and is_cache_valid(cache["matches"][event_code], ttl):
+        return jsonify(cache["matches"][event_code]["data"])
 
     season = request.args.get('season', datetime.now().year)
     data = fetch_from_frc_api(f"{season}/schedule/{event_code}")
 
     if data is None:
-        if cache_key in cache["matches"] and cache["matches"][cache_key]["data"] is not None:
-            return jsonify({"cached": True, "data": cache["matches"][cache_key]["data"]})
-        abort(503, "FRC API unavailable and no cached data")
+        abort(503, "FRC API unavailable")
 
-    cache["matches"][cache_key] = {"data": data, "timestamp": datetime.now()}
+    cache["matches"][event_code] = {"data": data, "timestamp": datetime.now()}
     return jsonify(data)
 
-# ==================== Module Endpoints ====================
+# ==================== MODULES ====================
 
 @api.route('/modules/manifest', methods=['GET'])
 @requires_auth
@@ -137,9 +138,9 @@ def get_modules_manifest():
     manifest = {
         "version": "1.0",
         "modules": [
-            {"id": "auto_scoring",        "name": "Autonomous Scoring",  "version": "2024.1", "description": "Track autonomous period scoring"},
-            {"id": "teleop_performance",   "name": "Teleop Performance",  "version": "2024.1", "description": "Track teleoperated period performance"},
-            {"id": "pit_scouting",         "name": "Pit Scouting",        "version": "2024.1", "description": "Robot capabilities and pit observations"},
+            {"id": "auto_scoring", "name": "Autonomous Scoring"},
+            {"id": "teleop_performance", "name": "Teleop Performance"},
+            {"id": "pit_scouting", "name": "Pit Scouting"},
         ]
     }
 
@@ -147,106 +148,46 @@ def get_modules_manifest():
     cache["modules_manifest"]["timestamp"] = datetime.now()
     return jsonify(manifest)
 
-@api.route('/modules/<module_id>', methods=['GET'])
-@requires_auth
-def get_module_definition(module_id):
-    ttl = 24 * 3600
-    if module_id in cache["modules"] and is_cache_valid(cache["modules"][module_id], ttl):
-        return jsonify(cache["modules"][module_id]["data"])
-
-    module_definitions = {
-        "auto_scoring": {
-            "id": "auto_scoring",
-            "fields": [
-                {"name": "mobility",  "type": "boolean", "label": "Left Starting Zone"},
-                {"name": "auto_high", "type": "number",  "label": "Auto High Goals"},
-                {"name": "auto_low",  "type": "number",  "label": "Auto Low Goals"},
-            ]
-        },
-        "teleop_performance": {
-            "id": "teleop_performance",
-            "fields": [
-                {"name": "teleop_high",     "type": "number", "label": "Teleop High Goals"},
-                {"name": "teleop_low",      "type": "number", "label": "Teleop Low Goals"},
-                {"name": "defense_rating",  "type": "rating", "label": "Defense Rating", "max": 5},
-            ]
-        },
-        "pit_scouting": {
-            "id": "pit_scouting",
-            "fields": [
-                {"name": "drivetrain", "type": "select", "label": "Drivetrain Type",
-                 "options": ["Tank", "Mecanum", "Swerve", "Other"]},
-                {"name": "weight", "type": "number", "label": "Robot Weight (lbs)"},
-                {"name": "notes",  "type": "text",   "label": "Additional Notes"},
-            ]
-        },
-    }
-
-    if module_id not in module_definitions:
-        abort(404, "Module not found")
-
-    module_data = module_definitions[module_id]
-    cache["modules"][module_id] = {"data": module_data, "timestamp": datetime.now()}
-    return jsonify(module_data)
-
-# ==================== Scouting Report Endpoints ====================
+# ==================== MATCH REPORTS ====================
 
 @api.route('/reports/match', methods=['POST'])
 @requires_auth
 def submit_match_report():
-    if not request.json:
-        abort(400, "No JSON data provided")
+    data = request.json
+    uid = request.headers.get("X-User-Id")
 
-    required_fields = ['event_code', 'match_number', 'team_number']
-    for field in required_fields:
-        if field not in request.json:
-            abort(400, f"Missing required field: {field}")
+    required = ["event_code", "team_number", "match_number"]
+    for r in required:
+        if r not in data:
+            abort(400, f"Missing {r}")
 
-    # Tag with the submitter's UUID from X-User-Id header
-    submitted_by = (request.headers.get("X-User-Id") or "").strip() or "unknown"
+    conn = get_conn()
+    cur = conn.cursor()
 
-    report = {
-        **request.json,
-        "submitted_by": submitted_by,
-        "timestamp": datetime.now().isoformat(),
-        "report_id": len(cache["reports_match"]) + 1,
-    }
+    cur.execute("""
+    INSERT INTO match_reports (submitted_by, event_code, team_number, match_number, data)
+    VALUES (%s,%s,%s,%s,%s)
+    RETURNING id, timestamp;
+    """, (
+        uid,
+        str(data["event_code"]),
+        str(data["team_number"]),
+        int(data["match_number"]),
+        data
+    ))
 
-    cache["reports_match"].append(report)
+    rid, ts = cur.fetchone()
+    conn.commit()
 
-    return jsonify({
-        "success": True,
-        "report_id": report["report_id"],
-        "message": "Match report submitted successfully"
-    }), 201
-
-@api.route('/reports/pit', methods=['POST'])
-@requires_auth
-def submit_pit_report():
-    if not request.json:
-        abort(400, "No JSON data provided")
-
-    required_fields = ['event_code', 'team_number']
-    for field in required_fields:
-        if field not in request.json:
-            abort(400, f"Missing required field: {field}")
-
-    submitted_by = (request.headers.get("X-User-Id") or "").strip() or "unknown"
-
-    report = {
-        **request.json,
-        "submitted_by": submitted_by,
-        "timestamp": datetime.now().isoformat(),
-        "report_id": len(cache["reports_pit"]) + 1,
-    }
-
-    cache["reports_pit"].append(report)
+    cur.close()
+    release_conn(conn)
 
     return jsonify({
         "success": True,
-        "report_id": report["report_id"],
-        "message": "Pit report submitted successfully"
+        "report_id": rid,
+        "timestamp": ts.isoformat()
     }), 201
+
 
 @api.route('/reports/match', methods=['GET'])
 @requires_auth
@@ -255,16 +196,84 @@ def get_match_reports():
     team_number = request.args.get('team_number')
     match_number = request.args.get('match_number')
 
-    reports = cache["reports_match"]
+    conn = get_conn()
+    cur = conn.cursor()
+
+    query = """
+    SELECT id, submitted_by, event_code, team_number, match_number, data, timestamp
+    FROM match_reports WHERE 1=1
+    """
+    params = []
 
     if event_code:
-        reports = [r for r in reports if r.get('event_code') == event_code]
+        query += " AND event_code=%s"
+        params.append(event_code)
+
     if team_number:
-        reports = [r for r in reports if str(r.get('team_number')) == str(team_number)]
+        query += " AND team_number=%s"
+        params.append(team_number)
+
     if match_number:
-        reports = [r for r in reports if str(r.get('match_number')) == str(match_number)]
+        query += " AND match_number=%s"
+        params.append(int(match_number))
+
+    query += " ORDER BY timestamp DESC LIMIT 2000"
+
+    cur.execute(query, tuple(params))
+    rows = cur.fetchall()
+
+    cur.close()
+    release_conn(conn)
+
+    reports = [{
+        "report_id": r[0],
+        "submitted_by": str(r[1]),
+        "event_code": r[2],
+        "team_number": r[3],
+        "match_number": r[4],
+        "data": r[5],
+        "timestamp": r[6].isoformat()
+    } for r in rows]
 
     return jsonify({"count": len(reports), "reports": reports})
+
+# ==================== PIT REPORTS ====================
+
+@api.route('/reports/pit', methods=['POST'])
+@requires_auth
+def submit_pit_report():
+    data = request.json
+    uid = request.headers.get("X-User-Id")
+
+    if "event_code" not in data or "team_number" not in data:
+        abort(400, "Missing required fields")
+
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    INSERT INTO pit_reports (submitted_by, event_code, team_number, data)
+    VALUES (%s,%s,%s,%s)
+    RETURNING id, timestamp;
+    """, (
+        uid,
+        str(data["event_code"]),
+        str(data["team_number"]),
+        data
+    ))
+
+    rid, ts = cur.fetchone()
+    conn.commit()
+
+    cur.close()
+    release_conn(conn)
+
+    return jsonify({
+        "success": True,
+        "report_id": rid,
+        "timestamp": ts.isoformat()
+    }), 201
+
 
 @api.route('/reports/pit', methods=['GET'])
 @requires_auth
@@ -272,27 +281,59 @@ def get_pit_reports():
     event_code = request.args.get('event_code')
     team_number = request.args.get('team_number')
 
-    reports = cache["reports_pit"]
+    conn = get_conn()
+    cur = conn.cursor()
+
+    query = """
+    SELECT id, submitted_by, event_code, team_number, data, timestamp
+    FROM pit_reports WHERE 1=1
+    """
+    params = []
 
     if event_code:
-        reports = [r for r in reports if r.get('event_code') == event_code]
+        query += " AND event_code=%s"
+        params.append(event_code)
+
     if team_number:
-        reports = [r for r in reports if str(r.get('team_number')) == str(team_number)]
+        query += " AND team_number=%s"
+        params.append(team_number)
+
+    query += " ORDER BY timestamp DESC LIMIT 2000"
+
+    cur.execute(query, tuple(params))
+    rows = cur.fetchall()
+
+    cur.close()
+    release_conn(conn)
+
+    reports = [{
+        "report_id": r[0],
+        "submitted_by": str(r[1]),
+        "event_code": r[2],
+        "team_number": r[3],
+        "data": r[4],
+        "timestamp": r[5].isoformat()
+    } for r in rows]
 
     return jsonify({"count": len(reports), "reports": reports})
 
-# ==================== Health Check ====================
+# ==================== HEALTH ====================
 
 @api.route('/health', methods=['GET'])
 def health_check():
+    try:
+        conn = get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT 1;")
+        cur.fetchone()
+        cur.close()
+        release_conn(conn)
+        db_ok = True
+    except:
+        db_ok = False
+
     return jsonify({
-        "status": "healthy",
+        "status": "healthy" if db_ok else "database_error",
         "timestamp": datetime.now().isoformat(),
-        "cache_stats": {
-            "events_cached": cache["events"]["data"] is not None,
-            "teams_cached": len(cache["teams"]),
-            "matches_cached": len(cache["matches"]),
-            "match_reports": len(cache["reports_match"]),
-            "pit_reports": len(cache["reports_pit"]),
-        }
+        "database_connected": db_ok
     })

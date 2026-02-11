@@ -24,6 +24,9 @@ from datetime import datetime
 import secrets
 from helpers import USERNAME, PASSWORD
 
+from data.users_repo import ensure_user
+
+
 permissions_roster = Blueprint('permissions_roster', __name__)
 
 # ━━━━━━━━━━━━━━━ ROLE & PERMISSION DEFINITIONS ━━━━━━━━━━━━━━━━
@@ -177,6 +180,8 @@ def requires_permission(perm_key):
         @wraps(f)
         def wrapper(*args, **kwargs):
             uid = _get_user_id()
+            username = (request.json or {}).get("username")
+            ensure_user(uid, username)
             if not uid:
                 return jsonify({"detail": "X-User-Id header required"}), 401
             _, perms = _resolve_permissions(uid)
@@ -258,6 +263,8 @@ def auth_sync():
     200  { user_id, role, permissions[], team|null, roster[]|null }
     """
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
 
@@ -306,6 +313,8 @@ def create_team():
     201   { success, team{}, role, permissions[] }
     """
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
 
@@ -373,6 +382,8 @@ def join_team():
     200   { success, team{}, role, permissions[] }
     """
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
 
@@ -440,6 +451,8 @@ def leave_team():
     200  { success, message, role, permissions[] }
     """
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
 
@@ -469,6 +482,8 @@ def leave_team():
 def team_info():
     """GET /api/teams/info"""
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
     _, team, _ = _get_user_team(uid)
@@ -487,6 +502,8 @@ def team_info():
 def update_team():
     """PUT /api/teams/update"""
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
     _, team, _ = _get_user_team(uid)
@@ -507,6 +524,8 @@ def update_team():
 def get_roster():
     """GET /api/roster"""
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
     _, team, _ = _get_user_team(uid)
@@ -528,6 +547,8 @@ def get_roster():
 def get_own_profile():
     """GET /api/roster/me"""
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
     _, _, member = _get_user_team(uid)
@@ -541,6 +562,8 @@ def get_own_profile():
 def update_own_profile():
     """PUT /api/roster/me"""
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
     _, _, member = _get_user_team(uid)
@@ -556,6 +579,8 @@ def update_own_profile():
 def register_profile():
     """POST /api/roster/register  (Flutter push-queue compat)"""
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
     _, _, member = _get_user_team(uid)
@@ -584,6 +609,8 @@ def _apply_profile_fields(member, body):
 def update_member_role(target_id):
     """PUT /api/roster/{uuid}/role"""
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
     _, team, caller = _get_user_team(uid)
@@ -618,6 +645,8 @@ def update_member_role(target_id):
 def remove_member(target_id):
     """DELETE /api/roster/{uuid}"""
     uid = _get_user_id()
+    username = (request.json or {}).get("username")
+    ensure_user(uid, username)
     if not uid:
         return jsonify({"detail": "X-User-Id header required"}), 400
     _, team, _ = _get_user_team(uid)
