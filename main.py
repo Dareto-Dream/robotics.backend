@@ -16,9 +16,6 @@ from data.auth_db import init_auth_db
 
 app = Flask(__name__)
 
-wait_for_databases()
-init_auth_db()
-init_db()
 
 # ---------- CORS ----------
 CORS(

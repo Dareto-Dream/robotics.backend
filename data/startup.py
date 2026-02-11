@@ -16,7 +16,7 @@ def _wait(label, connector):
             return
         except psycopg2.OperationalError as e:
             last_error = e
-            print(f"{label} DB not ready ({attempt+1}/60)...")
+            print(f"{label} DB not ready: {type(e).__name__}: {e}")
             time.sleep(2)
 
     raise RuntimeError(f"{label} database never became available") from last_error
