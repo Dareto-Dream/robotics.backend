@@ -1,11 +1,11 @@
 # routes/auth.py
 #
-# Auth Blueprint — mounts at /auth in main.py
+# Auth Blueprint — mounts at /auth
 #
 # Endpoints:
 #   POST /auth/register   — create account, returns tokens
 #   POST /auth/login      — verify credentials, returns tokens
-#   POST /auth/refresh    — strict token rotation (delete old, issue new pair)
+#   POST /auth/refresh    — strict token rotation
 #   POST /auth/logout     — delete refresh token from Redis
 #   GET  /auth/health     — liveness check for auth DB + Redis
 
@@ -34,7 +34,7 @@ auth = Blueprint("auth", __name__)
 @auth.route("/register", methods=["POST"])
 def register():
     body = request.get_json(silent=True) or {}
-    email    = body.get("email", "").strip().lower()
+    email = body.get("email", "").strip().lower()
     password = body.get("password", "")
 
     if not email or not password:
@@ -44,16 +44,15 @@ def register():
         return jsonify({"detail": "Password must be at least 8 characters"}), 400
 
     conn = get_auth_conn()
-    cur  = conn.cursor()
+    cur = conn.cursor()
 
-    # Check for duplicate email
     cur.execute("SELECT 1 FROM auth_users WHERE email = %s", (email,))
     if cur.fetchone():
         cur.close()
         release_auth_conn(conn)
         return jsonify({"detail": "Email already registered"}), 409
 
-    user_id      = str(uuid.uuid4())
+    user_id = str(uuid.uuid4())
     password_hash = hash_password(password)
 
     cur.execute(
@@ -64,7 +63,7 @@ def register():
     cur.close()
     release_auth_conn(conn)
 
-    access  = create_access_token(user_id)
+    access = create_access_token(user_id)
     refresh = create_refresh_token(user_id)
     set_refresh_token(user_id, refresh)
 
@@ -77,14 +76,14 @@ def register():
 @auth.route("/login", methods=["POST"])
 def login():
     body = request.get_json(silent=True) or {}
-    email    = body.get("email", "").strip().lower()
+    email = body.get("email", "").strip().lower()
     password = body.get("password", "")
 
     if not email or not password:
         return jsonify({"detail": "email and password are required"}), 400
 
     conn = get_auth_conn()
-    cur  = conn.cursor()
+    cur = conn.cursor()
 
     cur.execute(
         "SELECT id, password_hash FROM auth_users WHERE email = %s",
@@ -94,12 +93,11 @@ def login():
     cur.close()
     release_auth_conn(conn)
 
-    # Deliberate vague error — don't reveal whether email exists
     if not row or not verify_password(password, row[1]):
         return jsonify({"detail": "Invalid email or password"}), 401
 
     user_id = str(row[0])
-    access  = create_access_token(user_id)
+    access = create_access_token(user_id)
     refresh = create_refresh_token(user_id)
     set_refresh_token(user_id, refresh)
 
@@ -108,17 +106,15 @@ def login():
 
 # ------------------------------------------------------------------
 # POST /auth/refresh
-# Strict rotation: validate old refresh token → delete it → issue new pair
 # ------------------------------------------------------------------
 @auth.route("/refresh", methods=["POST"])
 def refresh():
-    body          = request.get_json(silent=True) or {}
+    body = request.get_json(silent=True) or {}
     refresh_token = body.get("refresh", "").strip()
 
     if not refresh_token:
         return jsonify({"detail": "refresh token is required"}), 400
 
-    # --- Decode the token ---
     try:
         payload = decode_token(refresh_token)
     except pyjwt.ExpiredSignatureError:
@@ -133,22 +129,18 @@ def refresh():
     if not user_id:
         return jsonify({"detail": "Token missing subject"}), 401
 
-    # --- Verify it matches what we have stored (strict rotation) ---
     stored = get_refresh_token(user_id)
 
     if not stored:
         return jsonify({"detail": "Session expired, please log in again"}), 401
 
     if stored != refresh_token:
-        # Token mismatch — possible reuse of a rotated token.
-        # Invalidate the session entirely as a security measure.
         delete_refresh_token(user_id)
         return jsonify({"detail": "Refresh token reuse detected — session invalidated"}), 401
 
-    # --- Rotate: delete old, issue new pair ---
     delete_refresh_token(user_id)
 
-    new_access  = create_access_token(user_id)
+    new_access = create_access_token(user_id)
     new_refresh = create_refresh_token(user_id)
     set_refresh_token(user_id, new_refresh)
 
@@ -170,12 +162,12 @@ def logout(current_user):
 # ------------------------------------------------------------------
 @auth.route("/health", methods=["GET"])
 def auth_health():
-    db_ok    = False
+    db_ok = False
     redis_ok = redis_ping()
 
     try:
         conn = get_auth_conn()
-        cur  = conn.cursor()
+        cur = conn.cursor()
         cur.execute("SELECT 1;")
         cur.fetchone()
         cur.close()

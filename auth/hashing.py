@@ -1,8 +1,7 @@
 # auth/hashing.py
 #
 # bcrypt password hashing.
-# bcrypt silently truncates input at 72 bytes — we enforce this explicitly
-# so behaviour is predictable regardless of password length.
+# bcrypt silently truncates input at 72 bytes — we enforce this explicitly.
 
 import bcrypt
 

@@ -80,12 +80,9 @@ def init_db():
     Uses PostgreSQL advisory lock so only ONE gunicorn worker
     performs schema creation.
     """
-
     conn = get_conn()
     cur = conn.cursor()
 
-    # ---- GLOBAL DATABASE LOCK ----
-    # 987654321 is just a random constant lock id
     cur.execute("SELECT pg_advisory_lock(987654321);")
 
     try:
@@ -112,19 +109,36 @@ def init_db():
         """)
 
         # MEMBERSHIPS
+        # is_active is COSMETIC ONLY — shows whether user is currently on the app.
+        # Team membership is determined by row existence.
         cur.execute("""
         CREATE TABLE IF NOT EXISTS memberships (
             id SERIAL PRIMARY KEY,
             user_id UUID REFERENCES users(user_id),
-            team_code CHAR(6) REFERENCES teams(team_code),
+            team_code CHAR(6) REFERENCES teams(team_code) ON DELETE CASCADE,
             role TEXT NOT NULL,
             display_name TEXT,
             bio TEXT DEFAULT '',
             profile_pic_url TEXT DEFAULT '',
             subteam TEXT DEFAULT '',
             joined_at TIMESTAMP DEFAULT NOW(),
-            is_active BOOLEAN DEFAULT TRUE,
+            is_active BOOLEAN DEFAULT FALSE,
             UNIQUE(user_id)
+        );
+        """)
+
+        # DEVICES (for OAC / offline auth)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS devices (
+            device_id UUID PRIMARY KEY,
+            user_id UUID NOT NULL REFERENCES users(user_id),
+            device_name TEXT NOT NULL,
+            device_type TEXT NOT NULL,
+            device_public_key_hash TEXT NOT NULL,
+            app_version TEXT DEFAULT '',
+            is_revoked BOOLEAN DEFAULT FALSE,
+            registered_at TIMESTAMP DEFAULT NOW(),
+            last_renewed TIMESTAMP DEFAULT NOW()
         );
         """)
 
@@ -153,10 +167,15 @@ def init_db():
         );
         """)
 
+        # INDEXES
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_match_reports_event_team ON match_reports (event_code, team_number);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_pit_reports_event_team ON pit_reports (event_code, team_number);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_memberships_team ON memberships (team_code);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_devices_user ON devices (user_id);")
+
         conn.commit()
 
     finally:
-        # Release lock so other workers continue booting
         cur.execute("SELECT pg_advisory_unlock(987654321);")
         cur.close()
         release_conn(conn)

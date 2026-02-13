@@ -16,7 +16,6 @@ FRC_API_BASE = "https://frc-api.firstinspires.org/v3.0"
 FRC_API_USERNAME = os.environ.get("FRC_API_USERNAME", "changeme")
 FRC_API_TOKEN = os.environ.get("FRC_API_TOKEN", "changeme")
 
-# Only external API caching remains in memory
 cache = {
     "events": {"data": None, "timestamp": None, "ttl": 6 * 3600},
     "teams": {},
@@ -60,7 +59,7 @@ def fetch_from_frc_api(endpoint):
 @require_auth
 def get_events(current_user):
     ensure_user(current_user["id"])
-    
+
     if is_cache_valid(cache["events"], cache["events"]["ttl"]):
         return jsonify(cache["events"]["data"])
 
@@ -79,7 +78,7 @@ def get_events(current_user):
 @require_auth
 def get_event_teams(current_user, event_code):
     ensure_user(current_user["id"])
-    
+
     ttl = 12 * 3600
 
     if event_code in cache["teams"] and is_cache_valid(cache["teams"][event_code], ttl):
@@ -99,7 +98,7 @@ def get_event_teams(current_user, event_code):
 @require_auth
 def get_event_matches(current_user, event_code):
     ensure_user(current_user["id"])
-    
+
     ttl = 30 * 60
 
     if event_code in cache["matches"] and is_cache_valid(cache["matches"][event_code], ttl):
@@ -121,7 +120,7 @@ def get_event_matches(current_user, event_code):
 @require_auth
 def get_modules_manifest(current_user):
     ensure_user(current_user["id"])
-    
+
     if is_cache_valid(cache["modules_manifest"], cache["modules_manifest"]["ttl"]):
         return jsonify(cache["modules_manifest"]["data"])
 
@@ -146,7 +145,7 @@ def get_modules_manifest(current_user):
 def submit_match_report(current_user):
     uid = current_user["id"]
     ensure_user(uid)
-    
+
     data = request.json
 
     required = ["event_code", "team_number", "match_number"]
@@ -186,7 +185,7 @@ def submit_match_report(current_user):
 @require_auth
 def get_match_reports(current_user):
     ensure_user(current_user["id"])
-    
+
     event_code = request.args.get('event_code')
     team_number = request.args.get('team_number')
     match_number = request.args.get('match_number')
@@ -240,7 +239,7 @@ def get_match_reports(current_user):
 def submit_pit_report(current_user):
     uid = current_user["id"]
     ensure_user(uid)
-    
+
     data = request.json
 
     if "event_code" not in data or "team_number" not in data:
@@ -277,7 +276,7 @@ def submit_pit_report(current_user):
 @require_auth
 def get_pit_reports(current_user):
     ensure_user(current_user["id"])
-    
+
     event_code = request.args.get('event_code')
     team_number = request.args.get('team_number')
 

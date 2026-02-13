@@ -1,10 +1,9 @@
 from flask import Flask
 from flask_cors import CORS
-from routes.frontend import frontend
-from routes.files import files
 from routes.api import api
 from routes.permissions_roster import permissions_roster
 from routes.auth import auth
+from routes.devices import devices
 from data.startup import wait_for_databases
 from data.db import init_db
 from data.auth_db import init_auth_db
@@ -12,21 +11,19 @@ import os
 
 app = Flask(__name__)
 
-
 # ---------- CORS ----------
 CORS(
     app,
-    origins=["http://localhost", "https://robotics.deltavdevs.com"],
+    origins=os.environ.get("CORS_ORIGINS", "http://localhost").split(","),
     supports_credentials=True,
     allow_headers=["Authorization", "Content-Type"],
 )
 
 # ---------- ROUTES ----------
-app.register_blueprint(frontend, url_prefix="/")
-app.register_blueprint(files, url_prefix="/api/files")
 app.register_blueprint(api, url_prefix="/api")
 app.register_blueprint(permissions_roster, url_prefix="/api")
 app.register_blueprint(auth, url_prefix="/auth")
+app.register_blueprint(devices, url_prefix="/auth/devices")
 
 # ---------- LOCAL RUN ----------
 if __name__ == "__main__":
