@@ -41,7 +41,8 @@ def _load_oac_private_key():
             "Set the Ed25519 private key PEM in environment."
         )
     from cryptography.hazmat.primitives.serialization import load_pem_private_key
-    return load_pem_private_key(OAC_PRIVATE_KEY_PEM.encode(), password=None)
+    pem = OAC_PRIVATE_KEY_PEM.replace("\\n", "\n").strip()
+    return load_pem_private_key(pem.encode(), password=None)
 
 
 def _load_oac_public_key():
@@ -52,7 +53,8 @@ def _load_oac_public_key():
             "Set the Ed25519 public key PEM in environment."
         )
     from cryptography.hazmat.primitives.serialization import load_pem_public_key
-    return load_pem_public_key(OAC_PUBLIC_KEY_PEM.encode())
+    pem = OAC_PUBLIC_KEY_PEM.replace("\\n", "\n").strip()
+    return load_pem_public_key(pem.encode())
 
 
 # ─── Standard tokens (HS256) ───
