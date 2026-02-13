@@ -1,8 +1,8 @@
 import time
 import psycopg2
 
-from data.db import get_conn as get_app_conn
-from data.auth_db import get_conn as get_auth_conn
+from data.db import get_conn as get_app_conn, init_db
+from data.auth_db import get_conn as get_auth_conn, init_auth_db
 
 
 def _wait(label, connector):
@@ -23,6 +23,12 @@ def _wait(label, connector):
 
 
 def wait_for_databases():
+    print("Initializing databases...")
+    init_auth_db()
+    print("AUTH database initialized.")
+    init_db()
+    print("DATA database initialized.")
+
     print("Waiting for AUTH database...")
     _wait("AUTH", get_auth_conn)
 

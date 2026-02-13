@@ -10,10 +10,6 @@ from data.db import init_db
 from data.auth_db import init_auth_db
 import os
 
-# DB init
-from data.db import init_db
-from data.auth_db import init_auth_db
-
 app = Flask(__name__)
 
 
