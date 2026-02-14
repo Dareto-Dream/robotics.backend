@@ -89,12 +89,6 @@ def _normalize_pem(pem: str) -> bytes:
 def _load_oac_private_key():
     if not OAC_PRIVATE_KEY_PEM:
         raise RuntimeError("OAC_PRIVATE_KEY not configured")
-    
-    pem = OAC_PRIVATE_KEY_PEM
-    print(pem)
-    print("\n")
-    print(_normalize_pem(OAC_PRIVATE_KEY_PEM))
-
 
     return load_pem_private_key(
         _normalize_pem(OAC_PRIVATE_KEY_PEM),
