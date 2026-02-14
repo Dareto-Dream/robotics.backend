@@ -24,6 +24,7 @@ from data.auth_redis import (
     delete_refresh_token,
     ping as redis_ping,
 )
+from data.users_repo import ensure_user
 
 auth = Blueprint("auth", __name__)
 
@@ -66,6 +67,8 @@ def register():
     access = create_access_token(user_id)
     refresh = create_refresh_token(user_id)
     set_refresh_token(user_id, refresh)
+
+    ensure_user(user_id)
 
     return jsonify({"access": access, "refresh": refresh}), 201
 

@@ -90,7 +90,6 @@ def init_db():
         cur.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id UUID PRIMARY KEY,
-            username TEXT,
             created_at TIMESTAMP DEFAULT NOW(),
             last_seen TIMESTAMP DEFAULT NOW()
         );
