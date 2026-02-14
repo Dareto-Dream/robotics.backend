@@ -17,6 +17,7 @@ from functools import wraps
 from datetime import datetime
 
 from auth.dependencies import require_auth
+from data.users_repo import ensure_user
 from data.db import get_conn, release_conn
 import secrets
 
@@ -296,6 +297,7 @@ def auth_sync(current_user):
     """
     uid = current_user["id"]
     email = current_user["email"]
+    ensure_user(uid)
 
     info = _db_get_user_membership(uid)
 
@@ -354,6 +356,7 @@ def set_active(current_user):
     Required: { "is_active": true/false }
     """
     uid = current_user["id"]
+    ensure_user(uid)
 
     info = _db_get_user_membership(uid)
     if info is None:
@@ -388,6 +391,7 @@ def set_active(current_user):
 def create_team(current_user):
     """POST /api/teams/create"""
     uid = current_user["id"]
+    ensure_user(uid)
 
     info = _db_get_user_membership(uid)
     if info is not None:
@@ -436,6 +440,7 @@ def create_team(current_user):
 def join_team(current_user):
     """POST /api/teams/join"""
     uid = current_user["id"]
+    ensure_user(uid)
 
     info = _db_get_user_membership(uid)
     if info is not None:
@@ -489,6 +494,7 @@ def leave_team(current_user):
         via POST /api/teams/transfer.
     """
     uid = current_user["id"]
+    ensure_user(uid)
 
     info = _db_get_user_membership(uid)
     if info is None:
@@ -539,6 +545,7 @@ def transfer_ownership(current_user):
     Required: { "target_user_id": "<uuid>" }
     """
     uid = current_user["id"]
+    ensure_user(uid)
 
     info = _db_get_user_membership(uid)
     if info is None:
@@ -603,6 +610,7 @@ def transfer_ownership(current_user):
 def get_team_info(current_user):
     """GET /api/teams/info"""
     uid = current_user["id"]
+    ensure_user(uid)
 
     info = _db_get_user_membership(uid)
     if info is None:
@@ -620,6 +628,7 @@ def get_team_info(current_user):
 def update_team_settings(current_user):
     """PUT /api/teams/settings"""
     uid = current_user["id"]
+    ensure_user(uid)
 
     info = _db_get_user_membership(uid)
     if info is None:
@@ -668,6 +677,7 @@ def update_team_settings(current_user):
 def get_roster(current_user):
     """GET /api/roster"""
     uid = current_user["id"]
+    ensure_user(uid)
 
     info = _db_get_user_membership(uid)
     if info is None:
@@ -687,6 +697,7 @@ def get_roster(current_user):
 def update_profile(current_user):
     """PUT /api/roster/profile"""
     uid = current_user["id"]
+    ensure_user(uid)
 
     info = _db_get_user_membership(uid)
     if info is None:
@@ -741,6 +752,7 @@ def _db_apply_profile_fields(user_id, body):
 def update_member_role(current_user, target_id):
     """PUT /api/roster/{uuid}/role"""
     uid = current_user["id"]
+    ensure_user(uid)
 
     caller_info = _db_get_user_membership(uid)
     if caller_info is None:
@@ -805,6 +817,7 @@ def update_member_role(current_user, target_id):
 def remove_member(current_user, target_id):
     """DELETE /api/roster/{uuid}"""
     uid = current_user["id"]
+    ensure_user(uid)
 
     info = _db_get_user_membership(uid)
     if info is None:
@@ -871,6 +884,7 @@ def get_guest_permissions():
 @requires_permission("view_admin")
 def admin_stats(current_user):
     """GET /api/admin/stats"""
+    ensure_user(current_user["id"])
 
     conn = get_conn()
     cur = conn.cursor()
