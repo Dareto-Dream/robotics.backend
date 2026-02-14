@@ -2,25 +2,6 @@
 from data.db import get_conn, release_conn
 
 
-def ensure_user(user_id):
-    """
-    Ensure user exists in the main users table.
-    Called after successful JWT authentication to sync with auth_users.
-    """
-    conn = get_conn()
-    cur = conn.cursor()
-
-    cur.execute("""
-    INSERT INTO users (user_id, username, last_seen)
-    VALUES (%s, NULL, NOW())
-    ON CONFLICT (user_id)
-    DO UPDATE SET last_seen = NOW();
-    """, (user_id,))
-
-    conn.commit()
-    cur.close()
-    release_conn(conn)
-
 
 def get_user_email(user_id):
     """

@@ -6,7 +6,6 @@ import base64
 
 from auth.dependencies import require_auth
 from data.db import get_conn, release_conn
-from data.users_repo import ensure_user
 
 api = Blueprint('api', __name__)
 
@@ -58,8 +57,6 @@ def fetch_from_frc_api(endpoint):
 @api.route('/events', methods=['GET'])
 @require_auth
 def get_events(current_user):
-    ensure_user(current_user["id"])
-
     if is_cache_valid(cache["events"], cache["events"]["ttl"]):
         return jsonify(cache["events"]["data"])
 
@@ -77,8 +74,6 @@ def get_events(current_user):
 @api.route('/events/<event_code>/teams', methods=['GET'])
 @require_auth
 def get_event_teams(current_user, event_code):
-    ensure_user(current_user["id"])
-
     ttl = 12 * 3600
 
     if event_code in cache["teams"] and is_cache_valid(cache["teams"][event_code], ttl):
@@ -97,8 +92,6 @@ def get_event_teams(current_user, event_code):
 @api.route('/events/<event_code>/matches', methods=['GET'])
 @require_auth
 def get_event_matches(current_user, event_code):
-    ensure_user(current_user["id"])
-
     ttl = 30 * 60
 
     if event_code in cache["matches"] and is_cache_valid(cache["matches"][event_code], ttl):
@@ -119,8 +112,6 @@ def get_event_matches(current_user, event_code):
 @api.route('/modules/manifest', methods=['GET'])
 @require_auth
 def get_modules_manifest(current_user):
-    ensure_user(current_user["id"])
-
     if is_cache_valid(cache["modules_manifest"], cache["modules_manifest"]["ttl"]):
         return jsonify(cache["modules_manifest"]["data"])
 
@@ -144,7 +135,6 @@ def get_modules_manifest(current_user):
 @require_auth
 def submit_match_report(current_user):
     uid = current_user["id"]
-    ensure_user(uid)
 
     data = request.json
 
@@ -184,8 +174,6 @@ def submit_match_report(current_user):
 @api.route('/reports/match', methods=['GET'])
 @require_auth
 def get_match_reports(current_user):
-    ensure_user(current_user["id"])
-
     event_code = request.args.get('event_code')
     team_number = request.args.get('team_number')
     match_number = request.args.get('match_number')
@@ -238,7 +226,6 @@ def get_match_reports(current_user):
 @require_auth
 def submit_pit_report(current_user):
     uid = current_user["id"]
-    ensure_user(uid)
 
     data = request.json
 
@@ -275,8 +262,6 @@ def submit_pit_report(current_user):
 @api.route('/reports/pit', methods=['GET'])
 @require_auth
 def get_pit_reports(current_user):
-    ensure_user(current_user["id"])
-
     event_code = request.args.get('event_code')
     team_number = request.args.get('team_number')
 
