@@ -1,4 +1,7 @@
 # data/users_repo.py
+from data.db import get_conn, release_conn
+
+
 
 def get_user_email(user_id):
     """
@@ -17,3 +20,21 @@ def get_user_email(user_id):
     release_auth_conn(conn)
     
     return row[0] if row else None
+
+
+def update_username(user_id, username):
+    """
+    Update the username for a user.
+    """
+    conn = get_conn()
+    cur = conn.cursor()
+
+    cur.execute("""
+    UPDATE users 
+    SET username = %s
+    WHERE user_id = %s
+    """, (username, user_id))
+
+    conn.commit()
+    cur.close()
+    release_conn(conn)

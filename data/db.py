@@ -86,6 +86,16 @@ def init_db():
     cur.execute("SELECT pg_advisory_lock(987654321);")
 
     try:
+        # USERS
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id UUID PRIMARY KEY,
+            username TEXT,
+            created_at TIMESTAMP DEFAULT NOW(),
+            last_seen TIMESTAMP DEFAULT NOW()
+        );
+        """)
+
         # TEAMS
         cur.execute("""
         CREATE TABLE IF NOT EXISTS teams (
