@@ -11,6 +11,11 @@ import jwt
 import os
 import hashlib
 import json
+import re
+from cryptography.hazmat.primitives.serialization import (
+    load_pem_private_key,
+    load_pem_public_key,
+)
 
 # ─── Symmetric secret for access / refresh tokens ───
 SECRET = os.environ.get("AUTH_JWT_SECRET", "dev_secret_change_me")
@@ -32,29 +37,72 @@ OAC_PUBLIC_KEY_PEM = os.environ.get("OAC_PUBLIC_KEY", "")
 OAC_ALGO = "EdDSA"
 OAC_EXPIRE_DAYS = int(os.environ.get("OAC_EXPIRE_DAYS", "7"))
 
+def _normalize_pem(pem: str) -> bytes:
+    """
+    Reconstruct a valid PEM file from environment-variable-safe strings.
+    Works with escaped newlines, single-line keys, Windows CRLF, and
+    dashboard-pasted keys.
+    """
+
+    if not pem:
+        raise RuntimeError("Empty PEM provided")
+
+    # 1) Undo JSON / dotenv escaping
+    pem = pem.replace("\\r", "")
+    pem = pem.replace("\\n", "\n")
+
+    # 2) Remove accidental surrounding quotes
+    pem = pem.strip().strip('"').strip("'")
+
+    # 3) Collapse accidental whitespace-only newlines
+    pem = re.sub(r"\n\s+\n", "\n", pem)
+
+    # 4) If platform flattened the key into one line, rebuild it
+    if "-----BEGIN" in pem and "\n" not in pem:
+        match = re.search(
+            r"-----BEGIN ([A-Z ]+)-----(.*?)-----END \1-----",
+            pem.replace("\r", ""),
+        )
+        if not match:
+            raise RuntimeError("Malformed PEM structure")
+
+        header, body = match.groups()
+
+        # remove all spaces accidentally inserted by dashboards
+        body = re.sub(r"\s+", "", body)
+
+        # wrap base64 to 64-char lines (PEM requirement)
+        lines = [body[i:i+64] for i in range(0, len(body), 64)]
+
+        pem = (
+            f"-----BEGIN {header}-----\n"
+            + "\n".join(lines)
+            + f"\n-----END {header}-----\n"
+        )
+
+    # ensure newline after END (OpenSSL expects it)
+    if not pem.endswith("\n"):
+        pem += "\n"
+
+    return pem.encode()
 
 def _load_oac_private_key():
-    """Load Ed25519 private key from PEM string."""
     if not OAC_PRIVATE_KEY_PEM:
-        raise RuntimeError(
-            "OAC_PRIVATE_KEY not configured. "
-            "Set the Ed25519 private key PEM in environment."
-        )
-    from cryptography.hazmat.primitives.serialization import load_pem_private_key
-    pem = OAC_PRIVATE_KEY_PEM.replace("\\n", "\n").strip()
-    return load_pem_private_key(pem.encode(), password=None)
+        raise RuntimeError("OAC_PRIVATE_KEY not configured")
+
+    return load_pem_private_key(
+        _normalize_pem(OAC_PRIVATE_KEY_PEM),
+        password=None
+    )
 
 
 def _load_oac_public_key():
-    """Load Ed25519 public key from PEM string."""
     if not OAC_PUBLIC_KEY_PEM:
-        raise RuntimeError(
-            "OAC_PUBLIC_KEY not configured. "
-            "Set the Ed25519 public key PEM in environment."
-        )
-    from cryptography.hazmat.primitives.serialization import load_pem_public_key
-    pem = OAC_PUBLIC_KEY_PEM.replace("\\n", "\n").strip()
-    return load_pem_public_key(pem.encode())
+        raise RuntimeError("OAC_PUBLIC_KEY not configured")
+
+    return load_pem_public_key(
+        _normalize_pem(OAC_PUBLIC_KEY_PEM)
+    )
 
 
 # ─── Standard tokens (HS256) ───
